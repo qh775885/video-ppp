@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>视频分图助手</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+  <header>
+    <h1>视频分图助手</h1>
+    <p class="subtitle clickable" onclick="require('electron').shell.openExternal('https://afdian.com/a/qcc6565')">
+      觉得好用可以为爱发电 ❤️
+    </p>
+  </header>
+
+  <main>
+    <!-- Dashboard (Main View) -->
+    <div id="dashboard" class="dashboard">
+
+      <!-- Left: Preview & Controls -->
+      <div class="sidebar">
+        <div class="video-drop-hint">📂 拖入视频可直接替换</div>
+        <div class="video-preview-wrapper" id="videoWrapper">
+          <video id="videoPlayer" muted playsinline></video>
+          <div class="video-overlay" id="processingOverlay">
+            <div class="spinner"></div>
+            <span>正在极速扫描...</span>
+          </div>
+        </div>
+
+        <!-- Video Meta & Quick Action -->
+        <div class="video-meta hidden" id="videoMeta">
+          <div class="meta-info">
+            <span class="label">时长</span>
+            <span class="value" id="durationDisplay">00:00</span>
+          </div>
+          <button id="recommendBtn" class="recommend-btn">
+            🚀 快速提取: <span id="recommendCount">24</span>张
+          </button>
+        </div>
+
+        <div class="panel controls-box">
+          <div class="folder-btn" id="cacheFolderBtn">
+            <span id="cacheFolderText">📂 设置本地缓存文件夹</span>
+          </div>
+          <div class="control-row">
+            <label>🎯 目标提取数量</label>
+            <div class="stepper">
+              <button id="btnDec">-</button>
+              <input type="number" id="targetCount" value="24" min="1" max="300">
+              <button id="btnInc">+</button>
+            </div>
+          </div>
+
+          <div class="control-row hint-row">
+            <small>系统将自动把视频切分为 <span id="segmentCountDisplay" class="highlight">24</span> 个片段，并从每个片段中找出最清晰的瞬间。</small>
+          </div>
+
+          <div class="actions">
+            <button id="startBtn" class="btn primary-btn">
+              <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z">
+                </path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              开始智能提取
+            </button>
+            <button id="downloadBtn" class="btn secondary-btn hidden" disabled>
+              <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+              </svg>
+              下载全部
+            </button>
+          </div>
+        </div>
+
+        <!-- Speed Info -->
+        <div class="stats-box">
+          <div class="stat-item">
+            <span class="label">扫描进度</span>
+            <div class="progress-track">
+              <div id="progressBar" class="progress-fill"></div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <span class="label">状态</span>
+            <span id="statusText" class="value">就绪</span>
+          </div>
+        </div>
+
+
+
+      </div>
+
+      <!-- Right: Results Grid -->
+      <div class="main-content">
+        <div class="gallery-toolbar">
+          <h2>精选结果 <span class="badge" id="resultBadge">0</span></h2>
+          <button id="clearBtn" class="text-btn">重置</button>
+        </div>
+        <div id="galleryGrid" class="gallery-grid-modern">
+          <!-- Items will be injected here -->
+          <div class="empty-state">
+            <p>点击“开始智能提取”<br>AI 将自动为您挑选最佳镜头</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- Lightbox (Full Screen View) -->
+    <div id="lightbox" class="lightbox">
+      <button id="btnClose" class="lb-close">&times;</button>
+      <button id="btnPrev" class="lb-nav lb-prev">&#10094;</button>
+      <div class="lb-content">
+        <img id="lightboxImg" src="">
+        <div class="lb-footer">
+          <span id="lbCount">1 / 10</span>
+          <small>(滚轮切换)</small>
+        </div>
+      </div>
+      <button id="btnNext" class="lb-nav lb-next">&#10095;</button>
+    </div>
+
+    <input type="file" id="fileInput" accept="video/*" hidden />
+  </main>
+  <script type="module" src="/main.js"></script>
+</body>
+
+</html>
