@@ -1,7 +1,8 @@
 # 视频分图助手 (Video Frame Extractor)
 
 一款简洁高效的视频自动分图工具，基于 Electron 构建。它可以帮助你快速从视频中提取清晰的关键帧图片。
-![image](image.png) 
+<img width="1386" height="953" alt="image" src="https://github.com/user-attachments/assets/9010543a-7cfd-44a5-aa91-f9a88c22754c" />
+
 
 ## ✨ 功能特性
 
