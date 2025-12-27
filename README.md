@@ -2,12 +2,6 @@
 
 ## 一款简洁高效的视频自动分图工具，基于 Electron 构建。它可以帮助你快速从视频中提取清晰的关键帧图片。
 
-### 通过网盘分享的文件：视频分图助手
-百度网盘 链接: https://pan.baidu.com/s/1X3PaoPJGoRZThQnqUood5g?pwd=kp49 提取码: kp49
-
-夸克网盘 链接：https://pan.quark.cn/s/18449e6d0144 提取码：VgzQ
-
-
 
 
 
