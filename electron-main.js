@@ -7,7 +7,7 @@ function createWindow() {
         height: 960,
         minWidth: 1000,
         minHeight: 700,
-        title: "视频分图助手",
+        title: "视频截图神器",
         icon: path.join(__dirname, 'public/icon.png'),
         webPreferences: {
             nodeIntegration: true,

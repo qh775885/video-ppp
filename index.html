@@ -4,120 +4,116 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>视频分图助手</title>
+  <title>视频截图神器</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
 
 <body>
   <header>
-    <h1>视频分图助手</h1>
-    <div style="display: flex; gap: 20px;">
-
-      <p class="subtitle clickable" onclick="require('electron').shell.openExternal('https://afdian.com/a/qcc6565')">
-        觉得好用可以为爱发电 ❤️
-      </p>
-    </div>
+    <h1>视频截图神器</h1>
+    <span class="version-tag" id="versionTag" title="点击查看作者">v1.0.0</span>
   </header>
 
   <main>
-    <!-- Dashboard (Main View) -->
     <div id="dashboard" class="dashboard">
 
-      <!-- Left: Preview & Controls -->
-      <div class="sidebar">
-        <div class="video-drop-hint">📂 拖入视频可直接替换</div>
-        <div class="video-preview-wrapper" id="videoWrapper">
+      <!-- Video Area -->
+      <div class="video-area">
+        <div class="video-box" id="videoWrapper">
           <video id="videoPlayer" muted playsinline></video>
+
           <div class="video-overlay" id="processingOverlay">
             <div class="spinner"></div>
-            <span>正在极速扫描...</span>
+            <span>扫描中...</span>
+          </div>
+
+          <div class="drop-hint" id="dropHint">
+            <div class="drop-icon">📂</div>
+            <p>拖入视频文件</p>
+            <small>空格播放 | S截图 | ←→快进 | P拉片</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Control Bar - Enhanced Layout -->
+      <div class="control-bar" id="controlBar">
+        <!-- Row 1: Seek Bar with Pick Mode -->
+        <div class="bar-row seek-row no-border">
+          <!-- Left: Play/Pause + Time -->
+          <button id="playPauseBtn" class="icon-btn" title="播放/暂停">
+            <svg id="playIcon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            <svg id="pauseIcon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            </svg>
+          </button>
+          <span id="currentTimeDisplay" class="time-label">00:00</span>
+
+          <!-- Center: Seek Bar -->
+          <input type="range" id="videoSeekBar" class="seek-bar" min="0" max="100" value="0" step="0.1">
+
+          <span id="totalTimeDisplay" class="time-label">00:00</span>
+
+          <!-- Right: Actions Group -->
+          <div class="control-actions">
+            <!-- Pick Mode Toggle -->
+            <button id="pickModeBtn" class="mode-toggle-btn" title="拉片选图模式 (P)：拖动进度条松开自动截图">
+              <span class="mode-icon">🎯</span>
+              <span class="mode-label">拉片</span>
+            </button>
+
+            <!-- Screenshot Button -->
+            <button id="screenshotBtn" class="action-btn shot" title="截图 (S)">
+              📷
+            </button>
+
+            <!-- Extract Group -->
+            <div class="extract-combo">
+              <input type="number" id="targetCount" class="count-input" value="12" min="1" max="300" title="提取数量">
+              <button id="startBtn" class="action-btn extract" title="智能提取">
+                <span class="btn-text">⚡ 提取</span>
+                <div class="btn-progress" id="btnProgress"></div>
+              </button>
+            </div>
           </div>
         </div>
 
-        <!-- Video Meta & Quick Action -->
-        <div class="video-meta hidden" id="videoMeta">
-          <div class="meta-info">
-            <span class="label">时长</span>
-            <span class="value" id="durationDisplay">00:00</span>
-          </div>
-          <button id="recommendBtn" class="recommend-btn">
-            🚀 快速提取: <span id="recommendCount">24</span>张
+        <!-- Hidden inputs for logic compatibility -->
+        <div style="display:none">
+          <input type="text" id="startTimeInput" value="00:00">
+          <input type="text" id="endTimeInput" value="00:00">
+          <button id="setStartBtn"></button>
+          <button id="setEndBtn"></button>
+          <button id="btnInc"></button>
+          <button id="btnDec"></button>
+        </div>
+      </div>
+
+      <!-- Gallery Area -->
+      <div class="gallery-area">
+        <!-- Row 1: Cache Folder -->
+        <div class="gallery-row folder-row">
+          <button id="cacheFolderBtn" class="folder-btn" title="设置缓存文件夹">
+            <span id="cacheFolderText">📂 缓存</span>
           </button>
         </div>
-
-        <div class="panel controls-box">
-          <div class="folder-btn" id="cacheFolderBtn">
-            <span id="cacheFolderText">📂 设置本地缓存文件夹</span>
-          </div>
-          <div class="control-row">
-            <label>🎯 目标提取数量</label>
-            <div class="stepper">
-              <button id="btnDec">-</button>
-              <input type="number" id="targetCount" value="24" min="1" max="300">
-              <button id="btnInc">+</button>
-            </div>
-          </div>
-
-          <div class="control-row hint-row">
-            <small>系统将自动把视频切分为 <span id="segmentCountDisplay" class="highlight">24</span> 个片段，并从每个片段中找出最清晰的瞬间。</small>
-          </div>
-
-          <div class="actions">
-            <button id="startBtn" class="btn primary-btn">
-              <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z">
-                </path>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              开始智能提取
-            </button>
-            <button id="downloadBtn" class="btn secondary-btn hidden" disabled>
-              <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-              </svg>
-              下载全部
-            </button>
-          </div>
+        <!-- Row 2: Result | Clear | Download -->
+        <div class="gallery-row result-row">
+          <span class="result-label">结果 <b id="resultBadge">0</b></span>
+          <button id="clearBtn" class="txt-btn">清空</button>
+          <button id="downloadBtn" class="dl-icon-btn" disabled title="下载">
+            📥
+          </button>
         </div>
-
-        <!-- Speed Info -->
-        <div class="stats-box">
-          <div class="stat-item">
-            <span class="label">扫描进度</span>
-            <div class="progress-track">
-              <div id="progressBar" class="progress-fill"></div>
-            </div>
-          </div>
-          <div class="stat-item">
-            <span class="label">状态</span>
-            <span id="statusText" class="value">就绪</span>
-          </div>
-        </div>
-
-
-
-      </div>
-
-      <!-- Right: Results Grid -->
-      <div class="main-content">
-        <div class="gallery-toolbar">
-          <h2>精选结果 <span class="badge" id="resultBadge">0</span></h2>
-          <button id="clearBtn" class="text-btn">重置</button>
-        </div>
-        <div id="galleryGrid" class="gallery-grid-modern">
-          <!-- Items will be injected here -->
-          <div class="empty-state">
-            <p>点击“开始智能提取”<br>AI 将自动为您挑选最佳镜头</p>
-          </div>
+        <div id="galleryGrid" class="gallery-list">
+          <div class="empty-hint">按S截图<br>或点击提取</div>
         </div>
       </div>
+
     </div>
 
-
-    <!-- Lightbox (Full Screen View) -->
+    <!-- Lightbox -->
     <div id="lightbox" class="lightbox">
       <button id="btnClose" class="lb-close">&times;</button>
       <button id="btnPrev" class="lb-nav lb-prev">&#10094;</button>
@@ -133,6 +129,15 @@
 
     <input type="file" id="fileInput" accept="video/*" hidden />
   </main>
+
+  <!-- Pick Mode Toast -->
+  <div id="pickModeToast" class="pick-mode-toast">
+    <span class="toast-icon">🎯</span>
+    <span class="toast-text">拉片模式 - 拖动进度条松开即截图</span>
+  </div>
+
+  <div id="screenshotToast" class="toast">📸 已截图!</div>
+
   <script type="module" src="/main.js"></script>
 </body>
 

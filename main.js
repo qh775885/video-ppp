@@ -21,39 +21,61 @@ if (typeof window !== 'undefined' && window.require) {
 
 // --- DOM Elements ---
 const el = (id) => document.getElementById(id);
-// const uploadZone = el('uploadZone'); // Removed
 const fileInput = el('fileInput');
-const dashboard = el('dashboard');
 const videoPlayer = el('videoPlayer');
 const startBtn = el('startBtn');
+const btnProgress = el('btnProgress');
 const downloadBtn = el('downloadBtn');
 const clearBtn = el('clearBtn');
 const targetCountInput = el('targetCount');
 const btnInc = el('btnInc');
 const btnDec = el('btnDec');
-const segmentCountDisplay = el('segmentCountDisplay');
-const progressBar = el('progressBar');
-const statusText = el('statusText');
 const galleryGrid = el('galleryGrid');
 const resultBadge = el('resultBadge');
 const processingOverlay = el('processingOverlay');
-// const miniUploadZone = el('miniUploadZone'); // Removed
+const dropHint = el('dropHint');
+const controlBar = el('controlBar');
 
 const cacheFolderBtn = el('cacheFolderBtn');
 const cacheFolderText = el('cacheFolderText');
 
-const videoMeta = el('videoMeta');
-const durationDisplay = el('durationDisplay');
-const recommendBtn = el('recommendBtn');
-const recommendCount = el('recommendCount');
+const playPauseBtn = el('playPauseBtn');
+const playIcon = el('playIcon');
+const pauseIcon = el('pauseIcon');
+const videoSeekBar = el('videoSeekBar');
+const currentTimeDisplay = el('currentTimeDisplay');
+const totalTimeDisplay = el('totalTimeDisplay');
+const screenshotBtn = el('screenshotBtn');
+const screenshotToast = el('screenshotToast');
 
-// Lightbox Elements
+const startTimeInput = el('startTimeInput');
+const endTimeInput = el('endTimeInput');
+const setStartBtn = el('setStartBtn');
+const setEndBtn = el('setEndBtn');
+
 const lightbox = el('lightbox');
 const lightboxImg = el('lightboxImg');
 const lbCount = el('lbCount');
 const btnPrev = el('btnPrev');
 const btnNext = el('btnNext');
 const btnClose = el('btnClose');
+
+// Pick Mode Elements
+const pickModeBtn = el('pickModeBtn');
+const pickModeToast = el('pickModeToast');
+
+// Version Tag
+const versionTag = el('versionTag');
+if (versionTag) {
+  versionTag.addEventListener('click', () => {
+    const url = 'https://space.bilibili.com/248612618';
+    if (window.require) {
+      window.require('electron').shell.openExternal(url);
+    } else {
+      window.open(url, '_blank');
+    }
+  });
+}
 
 // --- State ---
 let capturedFrames = [];
@@ -62,57 +84,48 @@ let fileLoaded = false;
 let currentLightBoxIndex = -1;
 let currentVideoFile = null;
 let cacheFolderPath = localStorage.getItem('video-extractor-cache-path') || null;
+let videoDuration = 0;
+let manualScreenshotCount = 0;
 
-// --- Init & Events ---
+// Pick Mode State
+let isPickMode = false;
+let isDraggingSeekBar = false;
 
-// 1. Restore Settings
+// --- Init ---
 const savedCount = localStorage.getItem('video-extractor-target-count');
-if (savedCount) {
-  targetCountInput.value = savedCount;
-  segmentCountDisplay.textContent = savedCount;
+if (savedCount) targetCountInput.value = savedCount;
+
+if (cacheFolderPath && fs && cacheFolderBtn) {
+  cacheFolderBtn.classList.add('active');
+  const folderName = cacheFolderPath.split(/[/\\]/).pop();
+  cacheFolderText.textContent = `📂 ${folderName}`;
+  cacheFolderBtn.title = cacheFolderPath;
+} else if (!fs && cacheFolderBtn) {
+  cacheFolderText.textContent = '📂 仅桌面版';
+  cacheFolderBtn.disabled = true;
 }
 
-// Restore Cache Path UI
-if (cacheFolderPath && fs) {
-  if (cacheFolderBtn) {
-    cacheFolderBtn.classList.add('active');
-    cacheFolderText.textContent = `📂 缓存至: ${cacheFolderPath}`;
-  }
-} else if (!fs) {
-  if (cacheFolderBtn) cacheFolderBtn.style.display = 'none';
-}
-
-// 2. Cache Folder Selection (Electron Only)
 if (cacheFolderBtn) {
   cacheFolderBtn.addEventListener('click', async () => {
     if (!ipcRenderer) return alert('请使用桌面版软件以启用此功能');
-
     const selectedPath = await ipcRenderer.invoke('select-folder');
     if (selectedPath) {
       cacheFolderPath = selectedPath;
       localStorage.setItem('video-extractor-cache-path', selectedPath);
       cacheFolderBtn.classList.add('active');
-      cacheFolderText.textContent = `📂 缓存至: ${selectedPath}`;
+      const folderName = selectedPath.split(/[/\\]/).pop();
+      cacheFolderText.textContent = `📂 ${folderName}`;
+      cacheFolderBtn.title = selectedPath;
     }
   });
 }
 
-// Global Drag & Drop (Drop anywhere to load video)
-document.ondragover = document.ondrop = (e) => {
-  e.preventDefault();
-}
-
+// Drag & Drop
+document.ondragover = document.ondrop = (e) => e.preventDefault();
 document.body.addEventListener('drop', (e) => {
   e.preventDefault();
   if (e.dataTransfer.files[0]?.type.startsWith('video/')) handleFile(e.dataTransfer.files[0]);
 });
-
-document.body.addEventListener('dragover', (e) => {
-  e.preventDefault();
-});
-
-
-
 
 fileInput.addEventListener('change', (e) => {
   if (e.target.files[0]) handleFile(e.target.files[0]);
@@ -121,17 +134,17 @@ fileInput.addEventListener('change', (e) => {
 
 startBtn.addEventListener('click', runSmartExtraction);
 downloadBtn.onclick = downloadAll;
-clearBtn.addEventListener('click', () => resetGallery());
+clearBtn.addEventListener('click', resetGallery);
 
 function resetGallery() {
   capturedFrames.forEach(f => URL.revokeObjectURL(f.url));
   capturedFrames = [];
-  galleryGrid.innerHTML = '<div class="empty-state"><p>点击“开始智能提取”<br>AI 将自动为您挑选最佳镜头</p></div>';
+  manualScreenshotCount = 0;
+  galleryGrid.innerHTML = '<div class="empty-hint">按S截图<br>或点击提取</div>';
   resultBadge.textContent = '0';
   downloadBtn.disabled = true;
   downloadBtn.classList.add('hidden');
-  statusText.textContent = '就绪';
-  progressBar.style.width = '0%';
+  btnProgress.style.width = '0%';
 }
 
 // Stepper
@@ -141,63 +154,227 @@ targetCountInput.addEventListener('input', () => updateTarget(0));
 
 function updateTarget(delta) {
   let val = parseInt(targetCountInput.value) || 24;
-  val = Math.max(1, Math.min(300, val + delta)); // Limit 300
+  val = Math.max(1, Math.min(300, val + delta));
   targetCountInput.value = val;
-  segmentCountDisplay.textContent = val;
   localStorage.setItem('video-extractor-target-count', val);
 }
 
+// Video Controls
+playPauseBtn.addEventListener('click', togglePlay);
+videoPlayer.addEventListener('click', togglePlay);
+
+function togglePlay() {
+  if (!fileLoaded) return;
+  videoPlayer.paused ? videoPlayer.play() : videoPlayer.pause();
+}
+
+videoPlayer.addEventListener('play', () => {
+  playIcon.style.display = 'none';
+  pauseIcon.style.display = 'block';
+});
+
+videoPlayer.addEventListener('pause', () => {
+  playIcon.style.display = 'block';
+  pauseIcon.style.display = 'none';
+});
+
+videoPlayer.addEventListener('timeupdate', () => {
+  if (!videoDuration || isDraggingSeekBar) return;
+  const percent = (videoPlayer.currentTime / videoDuration) * 100;
+  videoSeekBar.value = percent;
+  currentTimeDisplay.textContent = formatTimeMMSS(videoPlayer.currentTime);
+});
+
+// ========== SEEK BAR HANDLING (Normal + Pick Mode) ==========
+
+// Track when user starts dragging the seek bar
+videoSeekBar.addEventListener('mousedown', () => {
+  isDraggingSeekBar = true;
+
+  // In pick mode, pause video when starting to drag
+  if (isPickMode && fileLoaded && !videoPlayer.paused) {
+    videoPlayer.pause();
+  }
+});
+
+// Update video position while dragging
+videoSeekBar.addEventListener('input', () => {
+  if (!videoDuration) return;
+  videoPlayer.currentTime = (parseFloat(videoSeekBar.value) / 100) * videoDuration;
+  currentTimeDisplay.textContent = formatTimeMMSS(videoPlayer.currentTime);
+});
+
+// Handle mouseup - this is where pick mode takes screenshot
+document.addEventListener('mouseup', async () => {
+  if (!isDraggingSeekBar) return;
+  isDraggingSeekBar = false;
+
+  // If in pick mode, take screenshot on release
+  if (isPickMode && fileLoaded && !isProcessing) {
+    // Small delay to ensure the frame is rendered
+    await new Promise(r => setTimeout(r, 80));
+    takeManualScreenshot();
+  }
+});
+
+// ========== PICK MODE (拉片选图) ==========
+
+// Toggle Pick Mode
+pickModeBtn?.addEventListener('click', () => {
+  if (!fileLoaded) {
+    alert('请先载入视频文件');
+    return;
+  }
+
+  isPickMode = !isPickMode;
+
+  if (isPickMode) {
+    // Enable pick mode
+    pickModeBtn.classList.add('active');
+    videoSeekBar.classList.add('pick-mode');
+
+    // Pause video when entering pick mode
+    if (!videoPlayer.paused) {
+      videoPlayer.pause();
+    }
+
+    // Show toast
+    showPickModeToast(true);
+  } else {
+    // Disable pick mode
+    pickModeBtn.classList.remove('active');
+    videoSeekBar.classList.remove('pick-mode');
+
+    showPickModeToast(false);
+  }
+});
+
+// Pick Mode Toast
+function showPickModeToast(show) {
+  if (show) {
+    pickModeToast.classList.add('show');
+    setTimeout(() => pickModeToast.classList.remove('show'), 2500);
+  } else {
+    pickModeToast.classList.remove('show');
+  }
+}
+
+// ========== END PICK MODE ==========
+
+// Screenshot
+screenshotBtn.addEventListener('click', takeManualScreenshot);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (!fileLoaded || e.target.tagName === 'INPUT') return;
+  if (lightbox.classList.contains('active')) return;
+
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'KeyS') { e.preventDefault(); takeManualScreenshot(); }
+  if (e.code === 'KeyP') { e.preventDefault(); pickModeBtn?.click(); }
+  if (e.code === 'ArrowLeft') { e.preventDefault(); videoPlayer.currentTime = Math.max(0, videoPlayer.currentTime - 5); }
+  if (e.code === 'ArrowRight') { e.preventDefault(); videoPlayer.currentTime = Math.min(videoDuration, videoPlayer.currentTime + 5); }
+});
+
+async function takeManualScreenshot() {
+  if (!fileLoaded || isProcessing) return;
+
+  const wasPlaying = !videoPlayer.paused;
+  if (wasPlaying) videoPlayer.pause();
+
+  const canvas = document.createElement('canvas');
+  canvas.width = videoPlayer.videoWidth;
+  canvas.height = videoPlayer.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(videoPlayer, 0, 0, canvas.width, canvas.height);
+
+  manualScreenshotCount++;
+  const filename = `manual_${manualScreenshotCount.toString().padStart(3, '0')}.jpg`;
+
+  let saveDir = null;
+  if (fs && cacheFolderPath && currentVideoFile) {
+    const videoName = currentVideoFile.name.replace(/\.[^/.]+$/, "");
+    const safeName = videoName.replace(/[<>:"/\\|?*]/g, '_').replace(/[.\s]+$/g, '').trim() || 'video_frames';
+    saveDir = path.join(cacheFolderPath, safeName);
+    try {
+      if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+      const dataURL = canvas.toDataURL('image/jpeg', 0.95);
+      fs.writeFileSync(path.join(saveDir, filename), Buffer.from(dataURL.replace(/^data:image\/jpeg;base64,/, ""), 'base64'));
+    } catch (e) { console.error('Save screenshot failed', e); }
+  }
+
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.95));
+  const frameObj = { blob, url: URL.createObjectURL(blob), time: videoPlayer.currentTime, filename, isManual: true };
+  capturedFrames.push(frameObj);
+  addCard(frameObj, capturedFrames.length - 1);
+  resultBadge.textContent = capturedFrames.length;
+
+  if (saveDir) {
+    downloadBtn.textContent = '打开文件夹';
+    downloadBtn.onclick = () => window.require('electron').shell.openPath(saveDir);
+  } else {
+    downloadBtn.textContent = '下载';
+    downloadBtn.onclick = downloadAll;
+  }
+  downloadBtn.disabled = false;
+  downloadBtn.classList.remove('hidden');
+
+  showToast();
+
+  // In pick mode, don't resume playback
+  if (wasPlaying && !isPickMode) videoPlayer.play();
+}
+
+function showToast() {
+  screenshotToast.classList.add('show');
+  setTimeout(() => screenshotToast.classList.remove('show'), 1500);
+}
+
+// Time Range
+setStartBtn.addEventListener('click', () => startTimeInput.value = formatTimeMMSS(videoPlayer.currentTime));
+setEndBtn.addEventListener('click', () => endTimeInput.value = formatTimeMMSS(videoPlayer.currentTime));
+
+function parseTimeInput(str) {
+  const parts = str.split(':').map(Number);
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return 0;
+}
+
+function formatTimeMMSS(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+}
+
+// Handle File
 function handleFile(file) {
   currentVideoFile = file;
   resetGallery();
 
   const url = URL.createObjectURL(file);
   videoPlayer.src = url;
-  videoMeta.classList.add('hidden');
+  dropHint.classList.add('hidden');
 
   videoPlayer.onloadedmetadata = () => {
-    const sec = Math.floor(videoPlayer.duration);
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    durationDisplay.textContent = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-
-    // Rec: 1 frame/sec
-    // Rec: Smart Duration Scaling
-    // < 1min: 1 frame/sec (max 60)
-    // 1-5min: 1 frame/3sec (approx 20-100)
-    // 5-30min: 1 frame/10sec (approx 30-180)
-    // > 30min: 1 frame/30sec (max out at 300)
-    let rec = 24;
-    if (sec < 60) {
-      rec = sec;
-    } else if (sec < 300) {
-      rec = Math.floor(sec / 3);
-    } else if (sec < 1800) {
-      rec = Math.floor(sec / 10);
-    } else {
-      rec = Math.floor(sec / 30);
-    }
-
-    // Hard clamp: min 10, max 300
-    rec = Math.max(10, Math.min(300, rec));
-
-    recommendCount.textContent = rec;
-    recommendBtn.onclick = () => {
-      targetCountInput.value = rec;
-      updateTarget(0);
-      runSmartExtraction();
-    };
-    videoMeta.classList.remove('hidden');
+    videoDuration = videoPlayer.duration;
+    totalTimeDisplay.textContent = formatTimeMMSS(videoDuration);
+    startTimeInput.value = '00:00';
+    endTimeInput.value = formatTimeMMSS(videoDuration);
   };
 
-  // uploadZone.classList.add('hidden'); // Removed
-  dashboard.classList.remove('hidden');
   fileLoaded = true;
-  statusText.textContent = '视频已加载';
   startBtn.disabled = false;
+
+  // Reset pick mode when loading new video
+  if (isPickMode) {
+    isPickMode = false;
+    pickModeBtn?.classList.remove('active');
+    videoSeekBar?.classList.remove('pick-mode');
+  }
 }
 
-// --- Lightbox ---
+// Lightbox
 function openLightbox(index) {
   if (index < 0 || index >= capturedFrames.length) return;
   currentLightBoxIndex = index;
@@ -211,26 +388,13 @@ function closeLightbox() {
 }
 
 function updateLightboxContent() {
-  const frame = capturedFrames[currentLightBoxIndex];
-  lightboxImg.src = frame.url;
+  lightboxImg.src = capturedFrames[currentLightBoxIndex].url;
   lbCount.textContent = `${currentLightBoxIndex + 1} / ${capturedFrames.length}`;
 }
 
-function nextImage() {
-  if (currentLightBoxIndex < capturedFrames.length - 1) {
-    currentLightBoxIndex++;
-    updateLightboxContent();
-  }
-}
+function nextImage() { if (currentLightBoxIndex < capturedFrames.length - 1) { currentLightBoxIndex++; updateLightboxContent(); } }
+function prevImage() { if (currentLightBoxIndex > 0) { currentLightBoxIndex--; updateLightboxContent(); } }
 
-function prevImage() {
-  if (currentLightBoxIndex > 0) {
-    currentLightBoxIndex--;
-    updateLightboxContent();
-  }
-}
-
-// Lightbox Events
 btnClose.addEventListener('click', closeLightbox);
 btnNext.addEventListener('click', nextImage);
 btnPrev.addEventListener('click', prevImage);
@@ -242,46 +406,49 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nextImage();
   if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') prevImage();
 });
-lightbox.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  (e.deltaY > 0) ? nextImage() : prevImage();
-}, { passive: false });
 
+lightbox.addEventListener('wheel', (e) => { e.preventDefault(); e.deltaY > 0 ? nextImage() : prevImage(); }, { passive: false });
 
-// --- CORE ALGORITHM ---
+// Core Extraction
 async function runSmartExtraction() {
   if (isProcessing || !fileLoaded) return;
 
+  // Disable pick mode during extraction
+  if (isPickMode) {
+    isPickMode = false;
+    pickModeBtn?.classList.remove('active');
+    videoSeekBar?.classList.remove('pick-mode');
+  }
+
   isProcessing = true;
   startBtn.disabled = true;
+  startBtn.classList.add('processing');
   downloadBtn.disabled = true;
   processingOverlay.classList.add('active');
-  progressBar.style.width = '0%';
-  statusText.textContent = 'AI 扫描中...';
+  btnProgress.style.width = '0%';
 
-  if (capturedFrames.length > 0) resetGallery();
+  const manualFrames = capturedFrames.filter(f => f.isManual);
+  capturedFrames.forEach(f => { if (!f.isManual) URL.revokeObjectURL(f.url); });
+  capturedFrames = [...manualFrames];
   galleryGrid.innerHTML = '';
-  capturedFrames = [];
+  capturedFrames.forEach((f, i) => addCard(f, i));
 
-  // Prepare Save Folder
+  const rangeStart = parseTimeInput(startTimeInput.value);
+  let rangeEnd = parseTimeInput(endTimeInput.value);
+  if (rangeEnd <= rangeStart || rangeEnd > videoDuration) rangeEnd = videoDuration;
+  const rangeDuration = rangeEnd - rangeStart;
+
   let saveDir = null;
   if (fs && cacheFolderPath && currentVideoFile) {
     const videoName = currentVideoFile.name.replace(/\.[^/.]+$/, "");
-    const safeName = videoName.replace(/[<>:"/\\|?*]/g, '_');
+    const safeName = videoName.replace(/[<>:"/\\|?*]/g, '_').replace(/[.\s]+$/g, '').trim() || 'video_frames';
     saveDir = path.join(cacheFolderPath, safeName);
-
-    try {
-      if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
-      statusText.textContent = `保存到: ${safeName}`;
-    } catch (e) {
-      console.error('Create dir failed', e);
-      saveDir = null;
-    }
+    try { if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true }); }
+    catch (e) { console.error('Create dir failed', e); saveDir = null; }
   }
 
   const targetCount = parseInt(targetCountInput.value) || 24;
-  const duration = videoPlayer.duration;
-  const segmentDuration = duration / targetCount;
+  const segmentDuration = rangeDuration / targetCount;
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -289,152 +456,104 @@ async function runSmartExtraction() {
   const outCtx = outCanvas.getContext('2d');
 
   if (!videoPlayer.videoWidth) await new Promise(r => videoPlayer.onloadedmetadata = r);
+  canvas.width = 160; canvas.height = 90;
+  outCanvas.width = videoPlayer.videoWidth; outCanvas.height = videoPlayer.videoHeight;
 
-  canvas.width = 160;
-  canvas.height = 90;
-  outCanvas.width = videoPlayer.videoWidth;
-  outCanvas.height = videoPlayer.videoHeight;
+  let autoCount = 0;
 
   try {
     for (let i = 0; i < targetCount; i++) {
-      const segStart = i * segmentDuration;
+      const segStart = rangeStart + i * segmentDuration;
       let bestFrame = { score: -1, time: 0 };
-      const checkPoints = [
-        segStart + segmentDuration * 0.1,
-        segStart + segmentDuration * 0.5,
-        segStart + segmentDuration * 0.8
-      ];
+      const checkPoints = [segStart + segmentDuration * 0.1, segStart + segmentDuration * 0.5, segStart + segmentDuration * 0.8];
 
       for (let t of checkPoints) {
-        if (t >= duration) break;
+        if (t >= rangeEnd) break;
         videoPlayer.currentTime = t;
-        await new Promise(r => {
-          const h = () => { videoPlayer.removeEventListener('seeked', h); r(); };
-          videoPlayer.addEventListener('seeked', h);
-        });
+        await new Promise(r => { const h = () => { videoPlayer.removeEventListener('seeked', h); r(); }; videoPlayer.addEventListener('seeked', h); });
         ctx.drawImage(videoPlayer, 0, 0, 160, 90);
-        const frameData = ctx.getImageData(0, 0, 160, 90);
-        const score = calculateSharpness(frameData.data);
+        const score = calculateSharpness(ctx.getImageData(0, 0, 160, 90).data);
         if (score > bestFrame.score) bestFrame = { score, time: t };
       }
 
       if (bestFrame.time > 0) {
         videoPlayer.currentTime = bestFrame.time;
-        await new Promise(r => {
-          const h = () => { videoPlayer.removeEventListener('seeked', h); r(); };
-          videoPlayer.addEventListener('seeked', h);
-        });
-
+        await new Promise(r => { const h = () => { videoPlayer.removeEventListener('seeked', h); r(); }; videoPlayer.addEventListener('seeked', h); });
         outCtx.drawImage(videoPlayer, 0, 0, outCanvas.width, outCanvas.height);
-        const filename = `${(i + 1).toString().padStart(3, '0')}.jpg`;
+        autoCount++;
+        const filename = `${autoCount.toString().padStart(3, '0')}.jpg`;
 
         if (saveDir && fs) {
-          // Node.js Direct Save
           const dataURL = outCanvas.toDataURL('image/jpeg', 0.9);
-          const base64Data = dataURL.replace(/^data:image\/jpeg;base64,/, "");
-          const fullPath = path.join(saveDir, filename);
-          fs.writeFileSync(fullPath, Buffer.from(base64Data, 'base64'));
-
-          // Gallery Display
-          const blob = await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.9));
-          const frameObj = { blob, url: URL.createObjectURL(blob), time: bestFrame.time, filename };
-          capturedFrames.push(frameObj);
-          addCard(frameObj, capturedFrames.length - 1);
-
-        } else {
-          // Browser Blob
-          const blob = await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.9));
-          const frameObj = { blob, url: URL.createObjectURL(blob), time: bestFrame.time, filename };
-          capturedFrames.push(frameObj);
-          addCard(frameObj, capturedFrames.length - 1);
+          fs.writeFileSync(path.join(saveDir, filename), Buffer.from(dataURL.replace(/^data:image\/jpeg;base64,/, ""), 'base64'));
         }
+
+        const blob = await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.9));
+        capturedFrames.push({ blob, url: URL.createObjectURL(blob), time: bestFrame.time, filename, isManual: false });
+        addCard(capturedFrames[capturedFrames.length - 1], capturedFrames.length - 1);
         resultBadge.textContent = capturedFrames.length;
       }
+
       const pct = ((i + 1) / targetCount) * 100;
-      progressBar.style.width = `${pct}%`;
-      statusText.textContent = `提取中... ${i + 1}/${targetCount}`;
+      btnProgress.style.width = `${pct}%`;
+      startBtn.querySelector('.btn-text').textContent = `${Math.round(pct)}%`;
       await new Promise(r => setTimeout(r, 0));
     }
 
+    startBtn.querySelector('.btn-text').textContent = '⚡ 提取';
+
     if (saveDir) {
-      statusText.textContent = `已保存: ${saveDir}`;
-      downloadBtn.textContent = '打开文件夹';
+      downloadBtn.innerHTML = '📂'; // Icon for Open Folder
+      downloadBtn.title = '打开文件夹';
       downloadBtn.onclick = () => window.require('electron').shell.openPath(saveDir);
-      downloadBtn.disabled = false;
-      downloadBtn.classList.remove('hidden');
     } else {
-      statusText.textContent = `完成! 提取 ${capturedFrames.length} 张`;
-      downloadBtn.textContent = '下载相册 ZIP';
+      downloadBtn.innerHTML = '📥'; // Icon for Download
+      downloadBtn.title = '下载所有图片';
       downloadBtn.onclick = downloadAll;
-      downloadBtn.disabled = false;
-      downloadBtn.classList.remove('hidden');
     }
+    downloadBtn.disabled = false;
+    downloadBtn.classList.remove('hidden');
 
   } catch (e) {
     console.error(e);
-    statusText.textContent = '出错: ' + e.message;
-  } finally {
+    startBtn.querySelector('.btn-text').textContent = '⚡ 提取';
+  }
+  finally {
     isProcessing = false;
     startBtn.disabled = false;
+    startBtn.classList.remove('processing');
     processingOverlay.classList.remove('active');
   }
 }
 
-// --- Helper Functions ---
 function calculateSharpness(data) {
   let score = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    if (i > 4) {
-      const prevR = data[i - 4];
-      const prevG = data[i - 3];
-      const prevB = data[i - 2];
-      const prevGray = 0.299 * prevR + 0.587 * prevG + 0.114 * prevB;
-      score += Math.abs(gray - prevGray);
-    }
+  for (let i = 4; i < data.length; i += 4) {
+    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    const prevGray = 0.299 * data[i - 4] + 0.587 * data[i - 3] + 0.114 * data[i - 2];
+    score += Math.abs(gray - prevGray);
   }
   return score;
 }
 
 function addCard(frame, index) {
+  const empty = galleryGrid.querySelector('.empty-hint');
+  if (empty) empty.remove();
+
   const div = document.createElement('div');
-  div.className = 'gallery-card';
-  div.dataset.index = index; // Store index
-  div.innerHTML = `
-    <img src="${frame.url}" loading="lazy" />
-    <div class="overlay">
-       <span class="timestamp">${formatTime(frame.time)}</span>
-       <button class="icon-btn">🔍</button>
-    </div>
-  `;
+  div.className = 'gallery-card' + (frame.isManual ? ' manual-screenshot' : '');
+  div.dataset.index = index;
+  div.innerHTML = `<img src="${frame.url}" loading="lazy" /><span class="timestamp">${formatTimeMMSS(frame.time)}</span>`;
   galleryGrid.appendChild(div);
 }
 
-// Event Delegation for Gallery Clicks
 galleryGrid.addEventListener('click', (e) => {
   const card = e.target.closest('.gallery-card');
-  if (card) {
-    const idx = parseInt(card.dataset.index);
-    if (!isNaN(idx)) openLightbox(idx);
-  }
+  if (card) openLightbox(parseInt(card.dataset.index));
 });
-
-// window.preview = openLightbox; // Removed global
-
-function formatTime(s) {
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
 
 async function downloadAll() {
   const zip = new JSZip();
-  capturedFrames.forEach((frame) => {
-    zip.file(frame.filename, frame.blob);
-  });
-  const content = await zip.generateAsync({ type: 'blob' });
-  saveAs(content, `video_frames_${Date.now()}.zip`);
+  capturedFrames.forEach((frame) => zip.file(frame.filename, frame.blob));
+  saveAs(await zip.generateAsync({ type: 'blob' }), `video_frames_${Date.now()}.zip`);
 }
