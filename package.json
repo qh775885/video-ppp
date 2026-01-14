@@ -1,7 +1,7 @@
 {
   "name": "video-extractor",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.1",
   "license": "GPL-3.0",
   "main": "electron-main.js",
   "scripts": {
@@ -28,7 +28,13 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "视频截图神器",
+      "uninstallDisplayName": "视频截图神器"
     }
   },
   "devDependencies": {

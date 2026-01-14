@@ -1031,3 +1031,132 @@ main {
     background: rgba(255, 255, 255, 0.2);
     border-radius: 3px;
 }
+
+/* ========== About Modal ========== */
+.about-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+}
+
+.about-modal.active {
+    opacity: 1;
+    pointer-events: all;
+}
+
+.about-content {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 32px;
+    min-width: 300px;
+    max-width: 400px;
+    position: relative;
+    transform: scale(0.9);
+    transition: transform 0.25s ease;
+}
+
+.about-modal.active .about-content {
+    transform: scale(1);
+}
+
+.about-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+
+.about-close:hover {
+    color: var(--text-main);
+}
+
+.about-content h2 {
+    font-size: 1.2rem;
+    background: linear-gradient(90deg, #818cf8, #c084fc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+}
+
+.about-version {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    margin-bottom: 20px;
+}
+
+.about-section {
+    margin-bottom: 20px;
+}
+
+.about-section h3 {
+    font-size: 0.9rem;
+    color: var(--text-main);
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+
+.shortcut-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.shortcut-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.shortcut-item kbd {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-family: 'Consolas', monospace;
+    font-size: 0.8rem;
+    color: var(--text-main);
+    min-width: 50px;
+    text-align: center;
+}
+
+.shortcut-item span {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+}
+
+.author-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: linear-gradient(135deg, #fb7299, #ff9ab5);
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.author-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(251, 114, 153, 0.4);
+}
+
+.bilibili-icon {
+    font-size: 1.1rem;
+}

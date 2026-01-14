@@ -35,6 +35,7 @@ const resultBadge = el('resultBadge');
 const processingOverlay = el('processingOverlay');
 const dropHint = el('dropHint');
 const controlBar = el('controlBar');
+const videoWrapper = el('videoWrapper');
 
 const cacheFolderBtn = el('cacheFolderBtn');
 const cacheFolderText = el('cacheFolderText');
@@ -45,7 +46,6 @@ const pauseIcon = el('pauseIcon');
 const videoSeekBar = el('videoSeekBar');
 const currentTimeDisplay = el('currentTimeDisplay');
 const totalTimeDisplay = el('totalTimeDisplay');
-const screenshotBtn = el('screenshotBtn');
 const screenshotToast = el('screenshotToast');
 
 const startTimeInput = el('startTimeInput');
@@ -60,22 +60,47 @@ const btnPrev = el('btnPrev');
 const btnNext = el('btnNext');
 const btnClose = el('btnClose');
 
-// Pick Mode Elements
-const pickModeBtn = el('pickModeBtn');
-const pickModeToast = el('pickModeToast');
-
-// Version Tag
+// About Modal
 const versionTag = el('versionTag');
-if (versionTag) {
-  versionTag.addEventListener('click', () => {
-    const url = 'https://space.bilibili.com/248612618';
-    if (window.require) {
-      window.require('electron').shell.openExternal(url);
-    } else {
-      window.open(url, '_blank');
-    }
-  });
+const aboutModal = el('aboutModal');
+const aboutClose = el('aboutClose');
+const authorLink = el('authorLink');
+
+const BILIBILI_URL = 'https://space.bilibili.com/248612618';
+
+function openAboutModal() {
+  aboutModal?.classList.add('active');
 }
+
+function closeAboutModal() {
+  aboutModal?.classList.remove('active');
+}
+
+// Click version tag to open about modal
+versionTag?.addEventListener('click', openAboutModal);
+
+// Close about modal
+aboutClose?.addEventListener('click', closeAboutModal);
+aboutModal?.addEventListener('click', (e) => {
+  if (e.target === aboutModal) closeAboutModal();
+});
+
+// Author link click
+authorLink?.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (window.require) {
+    window.require('electron').shell.openExternal(BILIBILI_URL);
+  } else {
+    window.open(BILIBILI_URL, '_blank');
+  }
+});
+
+// ESC to close about modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && aboutModal?.classList.contains('active')) {
+    closeAboutModal();
+  }
+});
 
 // --- State ---
 let capturedFrames = [];
@@ -86,10 +111,6 @@ let currentVideoFile = null;
 let cacheFolderPath = localStorage.getItem('video-extractor-cache-path') || null;
 let videoDuration = 0;
 let manualScreenshotCount = 0;
-
-// Pick Mode State
-let isPickMode = false;
-let isDraggingSeekBar = false;
 
 // --- Init ---
 const savedCount = localStorage.getItem('video-extractor-target-count');
@@ -140,7 +161,7 @@ function resetGallery() {
   capturedFrames.forEach(f => URL.revokeObjectURL(f.url));
   capturedFrames = [];
   manualScreenshotCount = 0;
-  galleryGrid.innerHTML = '<div class="empty-hint">按S截图<br>或点击提取</div>';
+  galleryGrid.innerHTML = '<div class="empty-hint">右键截图<br>或点击提取</div>';
   resultBadge.textContent = '0';
   downloadBtn.disabled = true;
   downloadBtn.classList.add('hidden');
@@ -179,90 +200,47 @@ videoPlayer.addEventListener('pause', () => {
 });
 
 videoPlayer.addEventListener('timeupdate', () => {
-  if (!videoDuration || isDraggingSeekBar) return;
+  if (!videoDuration) return;
   const percent = (videoPlayer.currentTime / videoDuration) * 100;
   videoSeekBar.value = percent;
   currentTimeDisplay.textContent = formatTimeMMSS(videoPlayer.currentTime);
 });
 
-// ========== SEEK BAR HANDLING (Normal + Pick Mode) ==========
-
-// Track when user starts dragging the seek bar
-videoSeekBar.addEventListener('mousedown', () => {
-  isDraggingSeekBar = true;
-
-  // In pick mode, pause video when starting to drag
-  if (isPickMode && fileLoaded && !videoPlayer.paused) {
-    videoPlayer.pause();
-  }
-});
-
-// Update video position while dragging
+// Seek Bar
 videoSeekBar.addEventListener('input', () => {
   if (!videoDuration) return;
   videoPlayer.currentTime = (parseFloat(videoSeekBar.value) / 100) * videoDuration;
   currentTimeDisplay.textContent = formatTimeMMSS(videoPlayer.currentTime);
 });
 
-// Handle mouseup - this is where pick mode takes screenshot
-document.addEventListener('mouseup', async () => {
-  if (!isDraggingSeekBar) return;
-  isDraggingSeekBar = false;
+// ========== RIGHT-CLICK SCREENSHOT (右键截图) ==========
 
-  // If in pick mode, take screenshot on release
-  if (isPickMode && fileLoaded && !isProcessing) {
-    // Small delay to ensure the frame is rendered
-    await new Promise(r => setTimeout(r, 80));
-    takeManualScreenshot();
+// Prevent default context menu on video area and control bar
+videoWrapper.addEventListener('contextmenu', async (e) => {
+  e.preventDefault();
+  if (fileLoaded && !isProcessing) {
+    // Pause video before screenshot
+    const wasPlaying = !videoPlayer.paused;
+    if (wasPlaying) videoPlayer.pause();
+
+    await takeManualScreenshot();
+
+    // Don't auto-resume, let user decide
   }
 });
 
-// ========== PICK MODE (拉片选图) ==========
+// Also allow right-click on seek bar area
+controlBar.addEventListener('contextmenu', async (e) => {
+  e.preventDefault();
+  if (fileLoaded && !isProcessing) {
+    const wasPlaying = !videoPlayer.paused;
+    if (wasPlaying) videoPlayer.pause();
 
-// Toggle Pick Mode
-pickModeBtn?.addEventListener('click', () => {
-  if (!fileLoaded) {
-    alert('请先载入视频文件');
-    return;
-  }
-
-  isPickMode = !isPickMode;
-
-  if (isPickMode) {
-    // Enable pick mode
-    pickModeBtn.classList.add('active');
-    videoSeekBar.classList.add('pick-mode');
-
-    // Pause video when entering pick mode
-    if (!videoPlayer.paused) {
-      videoPlayer.pause();
-    }
-
-    // Show toast
-    showPickModeToast(true);
-  } else {
-    // Disable pick mode
-    pickModeBtn.classList.remove('active');
-    videoSeekBar.classList.remove('pick-mode');
-
-    showPickModeToast(false);
+    await takeManualScreenshot();
   }
 });
 
-// Pick Mode Toast
-function showPickModeToast(show) {
-  if (show) {
-    pickModeToast.classList.add('show');
-    setTimeout(() => pickModeToast.classList.remove('show'), 2500);
-  } else {
-    pickModeToast.classList.remove('show');
-  }
-}
-
-// ========== END PICK MODE ==========
-
-// Screenshot
-screenshotBtn.addEventListener('click', takeManualScreenshot);
+// ========== END RIGHT-CLICK SCREENSHOT ==========
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
@@ -270,17 +248,13 @@ document.addEventListener('keydown', (e) => {
   if (lightbox.classList.contains('active')) return;
 
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-  if (e.code === 'KeyS') { e.preventDefault(); takeManualScreenshot(); }
-  if (e.code === 'KeyP') { e.preventDefault(); pickModeBtn?.click(); }
+  if (e.code === 'KeyS') { e.preventDefault(); takeManualScreenshot(); } // Keep S as backup
   if (e.code === 'ArrowLeft') { e.preventDefault(); videoPlayer.currentTime = Math.max(0, videoPlayer.currentTime - 5); }
   if (e.code === 'ArrowRight') { e.preventDefault(); videoPlayer.currentTime = Math.min(videoDuration, videoPlayer.currentTime + 5); }
 });
 
 async function takeManualScreenshot() {
   if (!fileLoaded || isProcessing) return;
-
-  const wasPlaying = !videoPlayer.paused;
-  if (wasPlaying) videoPlayer.pause();
 
   const canvas = document.createElement('canvas');
   canvas.width = videoPlayer.videoWidth;
@@ -320,9 +294,6 @@ async function takeManualScreenshot() {
   downloadBtn.classList.remove('hidden');
 
   showToast();
-
-  // In pick mode, don't resume playback
-  if (wasPlaying && !isPickMode) videoPlayer.play();
 }
 
 function showToast() {
@@ -365,13 +336,6 @@ function handleFile(file) {
 
   fileLoaded = true;
   startBtn.disabled = false;
-
-  // Reset pick mode when loading new video
-  if (isPickMode) {
-    isPickMode = false;
-    pickModeBtn?.classList.remove('active');
-    videoSeekBar?.classList.remove('pick-mode');
-  }
 }
 
 // Lightbox
@@ -412,13 +376,6 @@ lightbox.addEventListener('wheel', (e) => { e.preventDefault(); e.deltaY > 0 ? n
 // Core Extraction
 async function runSmartExtraction() {
   if (isProcessing || !fileLoaded) return;
-
-  // Disable pick mode during extraction
-  if (isPickMode) {
-    isPickMode = false;
-    pickModeBtn?.classList.remove('active');
-    videoSeekBar?.classList.remove('pick-mode');
-  }
 
   isProcessing = true;
   startBtn.disabled = true;
