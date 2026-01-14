@@ -199,18 +199,144 @@ videoPlayer.addEventListener('pause', () => {
   pauseIcon.style.display = 'none';
 });
 
-videoPlayer.addEventListener('timeupdate', () => {
+// --- Seek Bar State ---
+let isSeeking = false;
+let wasPlayingBeforeSeek = false;
+
+// 更新进度条填充色
+function updateSeekBarFill(percent) {
+  const p = Math.max(0, Math.min(100, percent));
+  videoSeekBar.style.background = `linear-gradient(to right, var(--primary) 0%, var(--primary) ${p}%, var(--border) ${p}%, var(--border) 100%)`;
+}
+
+// 根据进度条位置更新视频
+function seekToPercent(percent) {
   if (!videoDuration) return;
+
+  const p = Math.max(0, Math.min(100, percent));
+  const seekTime = (p / 100) * videoDuration;
+
+  // 更新进度条
+  videoSeekBar.value = p;
+  updateSeekBarFill(p);
+  currentTimeDisplay.textContent = formatTimeMMSS(seekTime);
+
+  // 直接设置 currentTime 让视频跳转
+  videoPlayer.currentTime = seekTime;
+}
+
+// 获取进度条上的位置百分比
+function getSeekBarPercent(clientX) {
+  const rect = videoSeekBar.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const percent = (x / rect.width) * 100;
+  return Math.max(0, Math.min(100, percent));
+}
+
+videoPlayer.addEventListener('timeupdate', () => {
+  // 拖动时不更新进度条，避免冲突
+  if (!videoDuration || isSeeking) return;
   const percent = (videoPlayer.currentTime / videoDuration) * 100;
   videoSeekBar.value = percent;
+  updateSeekBarFill(percent);
   currentTimeDisplay.textContent = formatTimeMMSS(videoPlayer.currentTime);
 });
 
-// Seek Bar
+// ========== 鼠标拖动 ==========
+function handleMouseDown(e) {
+  if (!fileLoaded) return;
+
+  isSeeking = true;
+  wasPlayingBeforeSeek = !videoPlayer.paused;
+
+  // 暂停视频以便清晰显示帧
+  if (wasPlayingBeforeSeek) {
+    videoPlayer.pause();
+  }
+
+  // 点击位置立即跳转
+  seekToPercent(getSeekBarPercent(e.clientX));
+
+  // 添加 document 级别的事件监听
+  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mouseup', handleMouseUp);
+}
+
+function handleMouseMove(e) {
+  if (!isSeeking) return;
+  e.preventDefault();
+  seekToPercent(getSeekBarPercent(e.clientX));
+}
+
+function handleMouseUp() {
+  if (!isSeeking) return;
+  isSeeking = false;
+
+  // 移除 document 级别的事件监听
+  document.removeEventListener('mousemove', handleMouseMove);
+  document.removeEventListener('mouseup', handleMouseUp);
+
+  // 精确设置最终位置
+  if (videoDuration) {
+    const finalTime = (parseFloat(videoSeekBar.value) / 100) * videoDuration;
+    videoPlayer.currentTime = finalTime;
+  }
+
+  // 恢复播放
+  if (wasPlayingBeforeSeek) {
+    videoPlayer.play();
+    wasPlayingBeforeSeek = false;
+  }
+}
+
+videoSeekBar.addEventListener('mousedown', handleMouseDown);
+
+// ========== 触摸拖动 ==========
+function handleTouchStart(e) {
+  if (!fileLoaded) return;
+
+  isSeeking = true;
+  wasPlayingBeforeSeek = !videoPlayer.paused;
+
+  if (wasPlayingBeforeSeek) {
+    videoPlayer.pause();
+  }
+
+  const touch = e.touches[0];
+  seekToPercent(getSeekBarPercent(touch.clientX));
+}
+
+function handleTouchMove(e) {
+  if (!isSeeking) return;
+  e.preventDefault();
+  const touch = e.touches[0];
+  seekToPercent(getSeekBarPercent(touch.clientX));
+}
+
+function handleTouchEnd() {
+  if (!isSeeking) return;
+  isSeeking = false;
+
+  if (videoDuration) {
+    const finalTime = (parseFloat(videoSeekBar.value) / 100) * videoDuration;
+    videoPlayer.currentTime = finalTime;
+  }
+
+  if (wasPlayingBeforeSeek) {
+    videoPlayer.play();
+    wasPlayingBeforeSeek = false;
+  }
+}
+
+videoSeekBar.addEventListener('touchstart', handleTouchStart, { passive: false });
+videoSeekBar.addEventListener('touchmove', handleTouchMove, { passive: false });
+videoSeekBar.addEventListener('touchend', handleTouchEnd);
+videoSeekBar.addEventListener('touchcancel', handleTouchEnd);
+
+// 保留 input 事件作为备份（键盘操作等）
 videoSeekBar.addEventListener('input', () => {
-  if (!videoDuration) return;
-  videoPlayer.currentTime = (parseFloat(videoSeekBar.value) / 100) * videoDuration;
-  currentTimeDisplay.textContent = formatTimeMMSS(videoPlayer.currentTime);
+  if (isSeeking || !videoDuration) return;
+  seekToPercent(parseFloat(videoSeekBar.value));
 });
 
 // ========== RIGHT-CLICK SCREENSHOT (右键截图) ==========
@@ -284,10 +410,10 @@ async function takeManualScreenshot() {
   resultBadge.textContent = capturedFrames.length;
 
   if (saveDir) {
-    downloadBtn.textContent = '打开文件夹';
+    downloadBtn.innerHTML = '📂 <span class="dl-text">打开文件夹</span>';
     downloadBtn.onclick = () => window.require('electron').shell.openPath(saveDir);
   } else {
-    downloadBtn.textContent = '下载';
+    downloadBtn.innerHTML = '📥 <span class="dl-text">下载</span>';
     downloadBtn.onclick = downloadAll;
   }
   downloadBtn.disabled = false;
@@ -407,64 +533,57 @@ async function runSmartExtraction() {
   const targetCount = parseInt(targetCountInput.value) || 24;
   const segmentDuration = rangeDuration / targetCount;
 
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const outCanvas = document.createElement('canvas');
   const outCtx = outCanvas.getContext('2d');
 
   if (!videoPlayer.videoWidth) await new Promise(r => videoPlayer.onloadedmetadata = r);
-  canvas.width = 160; canvas.height = 90;
   outCanvas.width = videoPlayer.videoWidth; outCanvas.height = videoPlayer.videoHeight;
 
   let autoCount = 0;
 
   try {
     for (let i = 0; i < targetCount; i++) {
+      // 直接取每段中间位置，一次 seek 搞定
       const segStart = rangeStart + i * segmentDuration;
-      let bestFrame = { score: -1, time: 0 };
-      const checkPoints = [segStart + segmentDuration * 0.1, segStart + segmentDuration * 0.5, segStart + segmentDuration * 0.8];
+      const targetTime = segStart + segmentDuration * 0.5;
 
-      for (let t of checkPoints) {
-        if (t >= rangeEnd) break;
-        videoPlayer.currentTime = t;
-        await new Promise(r => { const h = () => { videoPlayer.removeEventListener('seeked', h); r(); }; videoPlayer.addEventListener('seeked', h); });
-        ctx.drawImage(videoPlayer, 0, 0, 160, 90);
-        const score = calculateSharpness(ctx.getImageData(0, 0, 160, 90).data);
-        if (score > bestFrame.score) bestFrame = { score, time: t };
+      if (targetTime >= rangeEnd) break;
+
+      // seek 到目标位置
+      videoPlayer.currentTime = targetTime;
+      await new Promise(r => {
+        const h = () => { videoPlayer.removeEventListener('seeked', h); r(); };
+        videoPlayer.addEventListener('seeked', h);
+      });
+
+      // 直接截图
+      outCtx.drawImage(videoPlayer, 0, 0, outCanvas.width, outCanvas.height);
+      autoCount++;
+      const filename = `${autoCount.toString().padStart(3, '0')}.jpg`;
+
+      if (saveDir && fs) {
+        const dataURL = outCanvas.toDataURL('image/jpeg', 0.9);
+        fs.writeFileSync(path.join(saveDir, filename), Buffer.from(dataURL.replace(/^data:image\/jpeg;base64,/, ""), 'base64'));
       }
 
-      if (bestFrame.time > 0) {
-        videoPlayer.currentTime = bestFrame.time;
-        await new Promise(r => { const h = () => { videoPlayer.removeEventListener('seeked', h); r(); }; videoPlayer.addEventListener('seeked', h); });
-        outCtx.drawImage(videoPlayer, 0, 0, outCanvas.width, outCanvas.height);
-        autoCount++;
-        const filename = `${autoCount.toString().padStart(3, '0')}.jpg`;
-
-        if (saveDir && fs) {
-          const dataURL = outCanvas.toDataURL('image/jpeg', 0.9);
-          fs.writeFileSync(path.join(saveDir, filename), Buffer.from(dataURL.replace(/^data:image\/jpeg;base64,/, ""), 'base64'));
-        }
-
-        const blob = await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.9));
-        capturedFrames.push({ blob, url: URL.createObjectURL(blob), time: bestFrame.time, filename, isManual: false });
-        addCard(capturedFrames[capturedFrames.length - 1], capturedFrames.length - 1);
-        resultBadge.textContent = capturedFrames.length;
-      }
+      const blob = await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.9));
+      capturedFrames.push({ blob, url: URL.createObjectURL(blob), time: targetTime, filename, isManual: false });
+      addCard(capturedFrames[capturedFrames.length - 1], capturedFrames.length - 1);
+      resultBadge.textContent = capturedFrames.length;
 
       const pct = ((i + 1) / targetCount) * 100;
       btnProgress.style.width = `${pct}%`;
       startBtn.querySelector('.btn-text').textContent = `${Math.round(pct)}%`;
-      await new Promise(r => setTimeout(r, 0));
     }
 
     startBtn.querySelector('.btn-text').textContent = '⚡ 提取';
 
     if (saveDir) {
-      downloadBtn.innerHTML = '📂'; // Icon for Open Folder
+      downloadBtn.innerHTML = '📂 <span class="dl-text">打开文件夹</span>';
       downloadBtn.title = '打开文件夹';
       downloadBtn.onclick = () => window.require('electron').shell.openPath(saveDir);
     } else {
-      downloadBtn.innerHTML = '📥'; // Icon for Download
+      downloadBtn.innerHTML = '📥 <span class="dl-text">下载</span>';
       downloadBtn.title = '下载所有图片';
       downloadBtn.onclick = downloadAll;
     }
