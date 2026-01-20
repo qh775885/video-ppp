@@ -11,7 +11,7 @@
 <body>
   <header>
     <h1>视频截图神器</h1>
-    <span class="version-tag" id="versionTag" title="点击查看作者">v1.0.1</span>
+    <span class="version-tag" id="versionTag" title="点击查看作者">v1.0.2</span>
   </header>
 
   <main>
@@ -50,7 +50,14 @@
           <span id="currentTimeDisplay" class="time-label">00:00</span>
 
           <!-- Center: Seek Bar -->
-          <input type="range" id="videoSeekBar" class="seek-bar" min="0" max="100" value="0" step="0.1">
+          <div class="seek-wrapper">
+            <input type="range" id="videoSeekBar" class="seek-bar" min="0" max="100" value="0" step="0.1">
+            <div class="range-selector" id="rangeSelector">
+              <div class="range-highlight" id="rangeHighlight"></div>
+              <div class="range-handle start" id="rangeStart" title="开始截取位置"></div>
+              <div class="range-handle end" id="rangeEnd" title="结束截取位置"></div>
+            </div>
+          </div>
 
           <span id="totalTimeDisplay" class="time-label">00:00</span>
 
@@ -126,7 +133,7 @@
     <div class="about-content">
       <button id="aboutClose" class="about-close">&times;</button>
       <h2>视频截图神器</h2>
-      <p class="about-version">v1.0.1</p>
+      <p class="about-version">v1.0.2</p>
 
       <div class="about-section">
         <h3>⌨️ 快捷键</h3>

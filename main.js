@@ -46,6 +46,10 @@ const pauseIcon = el('pauseIcon');
 const videoSeekBar = el('videoSeekBar');
 const currentTimeDisplay = el('currentTimeDisplay');
 const totalTimeDisplay = el('totalTimeDisplay');
+const rangeStart = el('rangeStart');
+const rangeEnd = el('rangeEnd');
+const rangeHighlight = el('rangeHighlight');
+const rangeSelector = el('rangeSelector');
 const screenshotToast = el('screenshotToast');
 
 const startTimeInput = el('startTimeInput');
@@ -111,6 +115,9 @@ let currentVideoFile = null;
 let cacheFolderPath = localStorage.getItem('video-extractor-cache-path') || null;
 let videoDuration = 0;
 let manualScreenshotCount = 0;
+let rangeStartPct = 0;
+let rangeEndPct = 100;
+let isDraggingRange = null;
 
 // --- Init ---
 const savedCount = localStorage.getItem('video-extractor-target-count');
@@ -204,9 +211,10 @@ let isSeeking = false;
 let wasPlayingBeforeSeek = false;
 
 // 更新进度条填充色
+// 更新进度条填充色
 function updateSeekBarFill(percent) {
-  const p = Math.max(0, Math.min(100, percent));
-  videoSeekBar.style.background = `linear-gradient(to right, var(--primary) 0%, var(--primary) ${p}%, var(--border) ${p}%, var(--border) 100%)`;
+  // User requested no filled progress bar, just the thumb.
+  videoSeekBar.style.background = 'transparent';
 }
 
 // 根据进度条位置更新视频
@@ -339,6 +347,72 @@ videoSeekBar.addEventListener('input', () => {
   seekToPercent(parseFloat(videoSeekBar.value));
 });
 
+// ========== Range Selector Logic ==========
+rangeStart.addEventListener('mousedown', (e) => startRangeDrag(e, 'start'));
+rangeEnd.addEventListener('mousedown', (e) => startRangeDrag(e, 'end'));
+rangeStart.addEventListener('touchstart', (e) => startRangeDrag(e, 'start'), { passive: false });
+rangeEnd.addEventListener('touchstart', (e) => startRangeDrag(e, 'end'), { passive: false });
+
+function startRangeDrag(e, type) {
+  if (!fileLoaded) return;
+  isDraggingRange = type;
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (e.type === 'mousedown') {
+    document.addEventListener('mousemove', handleRangeDragMove);
+    document.addEventListener('mouseup', endRangeDrag);
+  } else {
+    document.addEventListener('touchmove', handleRangeDragMove, { passive: false });
+    document.addEventListener('touchend', endRangeDrag);
+  }
+}
+
+function handleRangeDragMove(e) {
+  if (!isDraggingRange) return;
+
+  const clientX = e.type.startsWith('touch') ? e.touches[0].clientX : e.clientX;
+  const rect = rangeSelector.getBoundingClientRect();
+  const x = clientX - rect.left;
+  let pct = (x / rect.width) * 100;
+  pct = Math.max(0, Math.min(100, pct));
+
+  if (isDraggingRange === 'start') {
+    rangeStartPct = Math.min(pct, rangeEndPct - 1); // Min 1% gap
+  } else {
+    rangeEndPct = Math.max(pct, rangeStartPct + 1);
+  }
+
+  updateRangeUI();
+  updateTimeInputsFromRange();
+
+  // Preview frame
+  seekToPercent(isDraggingRange === 'start' ? rangeStartPct : rangeEndPct);
+}
+
+function endRangeDrag() {
+  isDraggingRange = null;
+  document.removeEventListener('mousemove', handleRangeDragMove);
+  document.removeEventListener('mouseup', endRangeDrag);
+  document.removeEventListener('touchmove', handleRangeDragMove);
+  document.removeEventListener('touchend', endRangeDrag);
+}
+
+function updateRangeUI() {
+  rangeStart.style.left = `${rangeStartPct}%`;
+  rangeEnd.style.left = `${rangeEndPct}%`;
+  rangeHighlight.style.left = `${rangeStartPct}%`;
+  rangeHighlight.style.width = `${rangeEndPct - rangeStartPct}%`;
+}
+
+function updateTimeInputsFromRange() {
+  if (!videoDuration) return;
+  const s = (rangeStartPct / 100) * videoDuration;
+  const e = (rangeEndPct / 100) * videoDuration;
+  startTimeInput.value = formatTimeMMSS(s);
+  endTimeInput.value = formatTimeMMSS(e);
+}
+
 // ========== RIGHT-CLICK SCREENSHOT (右键截图) ==========
 
 // Prevent default context menu on video area and control bar
@@ -458,6 +532,11 @@ function handleFile(file) {
     totalTimeDisplay.textContent = formatTimeMMSS(videoDuration);
     startTimeInput.value = '00:00';
     endTimeInput.value = formatTimeMMSS(videoDuration);
+
+    // Reset Range
+    rangeStartPct = 0;
+    rangeEndPct = 100;
+    updateRangeUI();
   };
 
   fileLoaded = true;
