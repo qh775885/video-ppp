@@ -23,11 +23,9 @@ function createWindow() {
         win.show();
     });
 
-    if (app.isPackaged) {
-        win.loadFile(path.join(__dirname, 'dist/index.html'));
-    } else {
-        win.loadURL('http://localhost:5173');
-    }
+    // Always load the built file since our 'dev' script is "vite build && electron ."
+    // This allows us to see changes without running a separate dev server.
+    win.loadFile(path.join(__dirname, 'dist/index.html'));
 }
 
 // 监听渲染进程的“选文件夹”请求

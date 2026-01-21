@@ -82,8 +82,12 @@ main {
     flex: 1;
     display: grid;
     grid-template-columns: 1fr 180px;
-    grid-template-rows: 1fr auto;
+    grid-template-rows: 1fr;
+    /* 只留一行，视频铺满 */
     min-height: 0;
+    position: relative;
+    /* 为悬浮元素提供定位基准 */
+    background: #000;
 }
 
 /* Video Area */
@@ -91,8 +95,14 @@ main {
     grid-column: 1;
     grid-row: 1;
     background: #000;
+    /* 纯黑背景 */
     position: relative;
     min-height: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    /* 防止视频溢出 */
 }
 
 .video-box {
@@ -199,51 +209,24 @@ main {
     pointer-events: auto;
 }
 
-/* Center Screenshot Button */
-.shot-btn {
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(245, 158, 11, 0.9);
-    color: white;
-    border: none;
-    padding: 8px 20px;
-    border-radius: 20px;
-    font-weight: 600;
-    font-size: 0.9rem;
-    cursor: pointer;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    transition: transform 0.2s, background 0.2s;
-    backdrop-filter: blur(4px);
-}
-
-.shot-btn:hover {
-    transform: translateX(-50%) scale(1.05);
-    background: rgba(245, 158, 11, 1);
-}
-
-/* Right Extract Group */
-.extract-group {
-    position: absolute;
-    bottom: 0;
-    right: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 5px;
-}
-
+/* Count Wrapper (Input + Label) */
 .count-wrapper {
-    background: rgba(30, 41, 59, 0.9);
+    background: rgba(255, 255, 255, 0.05);
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     gap: 5px;
     font-size: 0.75rem;
-    color: var(--text-dim);
+    color: rgba(255, 255, 255, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s;
+}
+
+.count-wrapper:focus-within,
+.count-wrapper:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
 }
 
 .float-input {
@@ -255,11 +238,12 @@ main {
     text-align: center;
     font-family: 'Consolas', monospace;
     padding: 0;
+    font-weight: 600;
 }
 
 .float-input:focus {
     outline: none;
-    color: var(--primary);
+    color: var(--primary-light);
 }
 
 .extract-btn {
@@ -304,25 +288,117 @@ main {
     transform: none !important;
 }
 
-/* Control Bar */
+/* Control Bar - Tiered Floating Console (双层悬浮控制台) */
 .control-bar {
     grid-column: 1;
-    grid-row: 2;
-    background: var(--bg-panel);
-    border-top: 1px solid var(--border);
+    grid-row: 1;
+
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+
+    width: 90%;
+    max-width: 800px;
+    padding: 16px 24px;
+    /* 更大的内边距 */
+
+    background: rgba(15, 23, 42, 0.7);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    /* 大圆角 */
+
+    box-shadow:
+        0 20px 50px -10px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(0, 0, 0, 0.1);
+
     display: flex;
     flex-direction: column;
+    /* 上下布局 */
+    gap: 12px;
+    /* 上下层间距 */
+    z-index: 100;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
-.bar-row {
+.control-bar:hover {
+    background: rgba(15, 23, 42, 0.85);
+    transform: translateX(-50%) translateY(-4px);
+    box-shadow:
+        0 30px 70px -12px rgba(0, 0, 0, 0.6),
+        0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* Row 1: Progress Track */
+.progress-row {
+    width: 100%;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
+    gap: 12px;
 }
 
-.seek-row {
-    border-bottom: 1px solid var(--border);
+/* Row 2: Actions */
+.action-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 居中对齐 */
+    gap: 20px;
+    /* 按钮组间距 */
+    position: relative;
+    padding-top: 4px;
+}
+
+/* Vertical Divider */
+.control-divider.vertical {
+    width: 1px;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.1);
+    margin: 0 4px;
+}
+
+/* Seek Wrapper - Full Width */
+.seek-wrapper {
+    flex: 1;
+    /* 占满所有剩余宽度 */
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 32px;
+    margin: 0;
+    min-width: 0;
+    /* 移除之前的最小宽度限制 */
+}
+
+/* Icon Button - Large (Play/Pause) */
+.icon-btn.large {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.icon-btn.large:hover {
+    background: var(--primary);
+}
+
+.icon-btn.large svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* Time Labels - 精致化 */
+.time-label {
+    font-family: 'Consolas', monospace;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+    min-width: 40px;
+    text-align: center;
 }
 
 /* Icon Buttons */
@@ -344,14 +420,6 @@ main {
 .icon-btn:hover {
     background: var(--primary);
     border-color: var(--primary);
-}
-
-/* Time Labels */
-.time-label {
-    font-family: 'Consolas', monospace;
-    font-size: 0.75rem;
-    color: var(--text-dim);
-    font-weight: 500;
 }
 
 /* Seek Bar - 优化拖动体验 */
@@ -425,6 +493,7 @@ main {
 
 /* Seek Wrapper & Range Selector */
 /* Seek Wrapper & Range Selector */
+/* Seek Wrapper & Range Selector */
 .seek-wrapper {
     flex: 1;
     position: relative;
@@ -432,7 +501,10 @@ main {
     flex-direction: column;
     justify-content: center;
     height: 32px;
-    margin: 10px 12px 0 12px;
+    margin: 0 4px;
+    /* 减小左右边距 */
+    min-width: 400px;
+    /* 关键：强制最小宽度，撑开进度条 */
 }
 
 /* Playback Progress Bar (The Input) */
@@ -734,129 +806,273 @@ main {
     opacity: 0.5;
 }
 
-/* Gallery Area */
-.gallery-area {
+/* Dashboard Grid - 固定右侧栏宽度 */
+.dashboard {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    /* 右侧栏加宽到 280px */
+    grid-template-rows: 1fr;
+    min-height: 0;
+    position: relative;
+    background: #000;
+    overflow: hidden;
+}
+
+/* Sidebar (Right Panel) */
+.sidebar {
     grid-column: 2;
-    grid-row: 1 / 3;
+    grid-row: 1;
     background: var(--bg-panel);
     border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    padding: 20px;
+    gap: 24px;
+    z-index: 50;
+    /* 低于控制台 */
+    overflow-y: auto;
 }
 
-.gallery-row {
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--border);
-}
-
-.folder-row {
-    padding: 8px;
-}
-
-.folder-btn {
-    width: 100%;
-    padding: 6px 10px;
-    background: var(--bg-input);
-    border: 1px dashed var(--border);
-    border-radius: 5px;
-    color: var(--text-dim);
-    font-size: 0.75rem;
-    cursor: pointer;
-    text-align: left;
-    transition: all 0.15s;
-}
-
-.folder-btn:hover {
-    border-color: var(--primary);
-    color: var(--primary);
-}
-
-.folder-btn.active {
-    background: rgba(34, 197, 94, 0.15);
-    border-color: var(--success);
-    border-style: solid;
-    color: var(--success);
-}
-
-.folder-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.result-row {
+/* Sidebar Section */
+.sidebar-section {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 12px;
 }
 
-.result-label {
+.sidebar-section.flex-grow {
+    flex: 1;
+    min-height: 0;
+    /* 允许滚动 */
+}
+
+/* Section Title */
+.section-title {
     font-size: 0.85rem;
-}
-
-.result-label b {
-    background: var(--primary);
-    color: white;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-size: 0.7rem;
-    margin-left: 4px;
-}
-
-.dl-icon-btn {
-    width: 100%;
-    height: 28px;
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 5px;
+    font-weight: 600;
     color: var(--text-dim);
-    font-size: 0.8rem;
-    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+/* Setting Items */
+.setting-item {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    justify-content: center;
-    gap: 4px;
-    transition: all 0.15s;
+    background: var(--bg-input);
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
 }
 
-.dl-icon-btn .dl-text {
-    font-size: 0.75rem;
-}
-
-.dl-icon-btn:hover:not(:disabled) {
-    background: var(--primary);
-    border-color: var(--primary);
-    color: white;
-}
-
-.dl-icon-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.download-row {
-    padding: 6px 8px;
-}
-
-.txt-btn {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 0.75rem;
-}
-
-.txt-btn:hover {
+.setting-item label {
+    font-size: 0.85rem;
     color: var(--text-main);
 }
 
+/* Folder Button (Text Only) */
+.folder-btn {
+    background: transparent;
+    border: none;
+    color: var(--primary-light);
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: right;
+    max-width: 140px;
+}
+
+.folder-btn:hover {
+    text-decoration: underline;
+}
+
+.text-truncate {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Header with Actions */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.text-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.text-btn:hover {
+    color: var(--text-main);
+}
+
+.badge {
+    background: var(--primary);
+    color: white;
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-weight: 600;
+}
+
+/* Gallery List */
 .gallery-list {
     flex: 1;
-    padding: 8px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    padding-right: 4px;
+    /* Scrollbar space */
+    min-height: 100px;
+    /* 最小高度 */
+}
+
+/* Empty Hint */
+.empty-hint {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    gap: 8px;
+    opacity: 0.5;
+}
+
+.hint-icon {
+    font-size: 2rem;
+}
+
+.empty-hint small {
+    font-size: 0.75rem;
+}
+
+/* Footer Button */
+.sidebar-footer {
+    padding-top: 10px;
+}
+
+.full-btn {
+    width: 100%;
+    padding: 10px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.full-btn:hover {
+    background: var(--primary-hover);
+}
+
+.full-btn:disabled {
+    background: var(--bg-input);
+    color: var(--text-dim);
+    cursor: not-allowed;
+}
+
+/* 快进 Stepper */
+.number-stepper {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.stepper-input {
+    width: 40px;
+    background: transparent;
+    border: none;
+    color: white;
+    text-align: right;
+    font-family: 'Consolas', monospace;
+    font-weight: 600;
+}
+
+.unit {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+}
+
+/* Gallery Item (Result Card) */
+.gallery-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-input);
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.gallery-item:hover {
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.gallery-thumb {
+    width: 60px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #000;
+}
+
+.gallery-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.gallery-name {
+    font-size: 0.85rem;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.gallery-meta {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    font-family: monospace;
+}
+
+/* Portrait Menu Improvements */
+.portrait-menu .menu-header {
+    padding: 8px 12px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+
+.portrait-btn {
+    /* 之前的样式保留，但确保点击区域合理 */
 }
 
 .gallery-card {
@@ -892,7 +1108,6 @@ main {
     font-size: 0.65rem;
     padding: 2px 5px;
     border-radius: 3px;
-    font-family: 'Consolas', monospace;
 }
 
 .gallery-card.manual-screenshot {
@@ -1481,4 +1696,208 @@ main {
 .multiplier-preview.warning {
     color: var(--warning);
     background: rgba(245, 158, 11, 0.15);
+}
+
+/* ========== Portrait Mode (新版整合样式) ========== */
+
+/* Portrait Group in Control Bar */
+.portrait-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+}
+
+.control-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+    margin: 0 4px;
+}
+
+/* Portrait Dropdown */
+.portrait-dropdown {
+    position: relative;
+}
+
+.portrait-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.portrait-btn:hover {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: var(--primary);
+    color: var(--text-main);
+}
+
+.portrait-btn.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+.portrait-icon {
+    font-size: 0.9rem;
+}
+
+.portrait-ratio {
+    font-family: 'Consolas', monospace;
+    font-weight: 600;
+    min-width: 32px;
+    text-align: center;
+}
+
+.dropdown-arrow {
+    font-size: 0.7rem;
+    opacity: 0.6;
+    margin-left: 2px;
+}
+
+/* Portrait Menu */
+.portrait-menu {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 6px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 130px;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(8px);
+    transition: all 0.15s;
+    z-index: 200;
+}
+
+.portrait-menu.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.menu-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--text-main);
+    transition: background 0.1s;
+}
+
+.menu-item:hover {
+    background: rgba(99, 102, 241, 0.15);
+}
+
+.menu-item.active {
+    background: var(--primary);
+    color: white;
+}
+
+.menu-item small {
+    color: var(--text-dim);
+    font-size: 0.65rem;
+}
+
+.menu-item.active small {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.menu-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 8px;
+}
+
+/* Position Buttons */
+.pos-buttons {
+    display: none;
+    gap: 2px;
+}
+
+.pos-buttons.visible {
+    display: flex;
+}
+
+.pos-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-size: 0.65rem;
+    cursor: pointer;
+    transition: all 0.1s;
+}
+
+.pos-btn:hover {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: var(--primary);
+    color: var(--text-main);
+}
+
+.pos-btn.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+/* Crop Overlay */
+.crop-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: none;
+    z-index: 50;
+}
+
+.crop-overlay.active {
+    display: block;
+}
+
+/* Crop Box */
+.crop-box {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    background: transparent;
+    border: 2px solid var(--primary);
+    box-shadow:
+        0 0 0 9999px rgba(0, 0, 0, 0.6),
+        0 0 20px rgba(99, 102, 241, 0.3);
+    pointer-events: auto;
+    cursor: ew-resize;
+    z-index: 51;
+}
+
+/* Grid Lines */
+.crop-box::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(to right, transparent 33.33%, rgba(255, 255, 255, 0.15) 33.33%, rgba(255, 255, 255, 0.15) 33.5%, transparent 33.5%, transparent 66.66%, rgba(255, 255, 255, 0.15) 66.66%, rgba(255, 255, 255, 0.15) 66.83%, transparent 66.83%),
+        linear-gradient(to bottom, transparent 33.33%, rgba(255, 255, 255, 0.15) 33.33%, rgba(255, 255, 255, 0.15) 33.5%, transparent 33.5%, transparent 66.66%, rgba(255, 255, 255, 0.15) 66.66%, rgba(255, 255, 255, 0.15) 66.83%, transparent 66.83%);
+    pointer-events: none;
 }

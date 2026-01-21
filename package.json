@@ -1,15 +1,15 @@
 {
   "name": "video-extractor",
   "private": true,
-  "version": "1.0.3",
+  "version": "2.0.0",
   "license": "GPL-3.0",
   "main": "electron-main.js",
   "scripts": {
     "dev": "vite build && electron .",
-    "build": "vite build && electron-builder --dir",
-    "dist": "vite build && electron-builder",
     "web": "vite",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:local": "vite build && electron-builder --dir",
+    "build:setup": "vite build && electron-builder --win nsis"
   },
   "build": {
     "appId": "com.yourname.videoextractor",
@@ -20,7 +20,7 @@
       "package.json"
     ],
     "directories": {
-      "output": "release"
+      "output": "release/${version}"
     },
     "win": {
       "target": "nsis"
@@ -37,12 +37,22 @@
     }
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@vitejs/plugin-react": "^5.1.2",
+    "autoprefixer": "^10.4.23",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
     "vite": "^7.2.4"
   },
   "dependencies": {
+    "clsx": "^2.1.1",
     "file-saver": "^2.0.5",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "tailwind-merge": "^3.4.0"
   }
 }

@@ -68,6 +68,14 @@ const btnPrev = el('btnPrev');
 const btnNext = el('btnNext');
 const btnClose = el('btnClose');
 
+// Portrait Mode Elements (整合到控制栏)
+const portraitBtn = el('portraitBtn');
+const portraitRatio = el('portraitRatio');
+const portraitMenu = el('portraitMenu');
+const posButtons = el('posButtons');
+const cropOverlay = el('cropOverlay');
+const cropBox = el('cropBox');
+
 // About Modal
 const versionTag = el('versionTag');
 const aboutModal = el('aboutModal');
@@ -122,6 +130,12 @@ let manualScreenshotCount = 0;
 let rangeStartPct = 0;
 let rangeEndPct = 100;
 let isDraggingRange = null;
+
+// Portrait Mode State
+let isPortraitMode = false;
+let currentRatio = '9:16';
+let cropPositionPct = 50; // Center position (0-100)
+let isDraggingCrop = false;
 
 // --- Init ---
 const savedCount = localStorage.getItem('video-extractor-target-count');
@@ -234,20 +248,20 @@ function updateMultiplierFromCount() {
 function updateMultiplierPreview() {
   const duration = getRangeDurationSeconds();
   const count = parseInt(targetCountInput.value) || 12;
-  
+
   if (duration <= 0) {
     multiplierPreview.textContent = '--';
     multiplierPreview.classList.remove('warning');
     return;
   }
-  
+
   // 显示 "区间时长s → 张数张"
-  const durationDisplay = duration >= 60 
-    ? `${Math.floor(duration / 60)}m${Math.round(duration % 60)}s` 
+  const durationDisplay = duration >= 60
+    ? `${Math.floor(duration / 60)}m${Math.round(duration % 60)}s`
     : `${Math.round(duration)}s`;
-  
+
   multiplierPreview.textContent = `${durationDisplay}→${count}张`;
-  
+
   // 如果张数过多，显示警告色
   if (count > 100) {
     multiplierPreview.classList.add('warning');
@@ -528,24 +542,50 @@ controlBar.addEventListener('contextmenu', async (e) => {
 // ========== END RIGHT-CLICK SCREENSHOT ==========
 
 // Keyboard shortcuts
+// Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
   if (!fileLoaded || e.target.tagName === 'INPUT') return;
   if (lightbox.classList.contains('active')) return;
 
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'KeyS') { e.preventDefault(); takeManualScreenshot(); } // Keep S as backup
-  if (e.code === 'ArrowLeft') { e.preventDefault(); videoPlayer.currentTime = Math.max(0, videoPlayer.currentTime - 5); }
-  if (e.code === 'ArrowRight') { e.preventDefault(); videoPlayer.currentTime = Math.min(videoDuration, videoPlayer.currentTime + 5); }
+
+  if (e.code === 'ArrowLeft') {
+    e.preventDefault();
+    const step = getSeekStep();
+    videoPlayer.currentTime = Math.max(0, videoPlayer.currentTime - step);
+  }
+  if (e.code === 'ArrowRight') {
+    e.preventDefault();
+    const step = getSeekStep();
+    videoPlayer.currentTime = Math.min(videoDuration, videoPlayer.currentTime + step);
+  }
 });
 
 async function takeManualScreenshot() {
   if (!fileLoaded || isProcessing) return;
 
   const canvas = document.createElement('canvas');
-  canvas.width = videoPlayer.videoWidth;
-  canvas.height = videoPlayer.videoHeight;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(videoPlayer, 0, 0, canvas.width, canvas.height);
+
+  // Check if portrait mode is active
+  const cropCoords = getCropCoordinates();
+
+  if (cropCoords) {
+    // Portrait mode: use crop dimensions
+    canvas.width = cropCoords.width;
+    canvas.height = cropCoords.height;
+    ctx.drawImage(
+      videoPlayer,
+      cropCoords.x, cropCoords.y, cropCoords.width, cropCoords.height,
+      0, 0, canvas.width, canvas.height
+    );
+  } else {
+    // Normal mode: full frame
+    canvas.width = videoPlayer.videoWidth;
+    canvas.height = videoPlayer.videoHeight;
+    ctx.drawImage(videoPlayer, 0, 0, canvas.width, canvas.height);
+  }
 
   manualScreenshotCount++;
   const filename = `manual_${manualScreenshotCount.toString().padStart(3, '0')}.jpg`;
@@ -622,7 +662,7 @@ function handleFile(file) {
     rangeStartPct = 0;
     rangeEndPct = 100;
     updateRangeUI();
-    
+
     // 视频加载后更新倍数预览
     updateCountFromMultiplier();
   };
@@ -704,7 +744,19 @@ async function runSmartExtraction() {
   const outCtx = outCanvas.getContext('2d');
 
   if (!videoPlayer.videoWidth) await new Promise(r => videoPlayer.onloadedmetadata = r);
-  outCanvas.width = videoPlayer.videoWidth; outCanvas.height = videoPlayer.videoHeight;
+
+  // Check if portrait mode is active and get crop coordinates
+  const cropCoords = getCropCoordinates();
+
+  if (cropCoords) {
+    // Portrait mode: use crop dimensions
+    outCanvas.width = cropCoords.width;
+    outCanvas.height = cropCoords.height;
+  } else {
+    // Normal mode: full frame
+    outCanvas.width = videoPlayer.videoWidth;
+    outCanvas.height = videoPlayer.videoHeight;
+  }
 
   let autoCount = 0;
 
@@ -723,8 +775,19 @@ async function runSmartExtraction() {
         videoPlayer.addEventListener('seeked', h);
       });
 
-      // 直接截图
-      outCtx.drawImage(videoPlayer, 0, 0, outCanvas.width, outCanvas.height);
+      // 截图（支持竖图裁剪）
+      if (cropCoords) {
+        // Portrait mode: draw cropped region
+        outCtx.drawImage(
+          videoPlayer,
+          cropCoords.x, cropCoords.y, cropCoords.width, cropCoords.height,
+          0, 0, outCanvas.width, outCanvas.height
+        );
+      } else {
+        // Normal mode: draw full frame
+        outCtx.drawImage(videoPlayer, 0, 0, outCanvas.width, outCanvas.height);
+      }
+
       autoCount++;
       const filename = `${autoCount.toString().padStart(3, '0')}.jpg`;
 
@@ -800,3 +863,293 @@ async function downloadAll() {
   capturedFrames.forEach((frame) => zip.file(frame.filename, frame.blob));
   saveAs(await zip.generateAsync({ type: 'blob' }), `video_frames_${Date.now()}.zip`);
 }
+
+// ========== Portrait Mode Logic (新版整合交互) ==========
+
+const RATIOS = {
+  '9:16': 9 / 16,
+  '3:4': 3 / 4,
+  '2:3': 2 / 3,
+  '4:5': 4 / 5,
+  '1:1': 1
+};
+
+// --- 竖图模式逻辑 (现代化交互) ---
+
+// 初始化：点击按钮主体开关，点击箭头（如果有分离区域）或整体逻辑
+// 这里我们简化：点击按钮弹出菜单是不够便捷的。
+// 新逻辑：点击按钮 -> 切换开关。Hover或点击旁边的箭头 -> 选比例。
+// 目前 HTML 结构是整个按钮一体的。我们可以区分点击事件的目标，或者改逻辑。
+// 让我们实现：点击按钮 = 开关；
+
+portraitBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+
+  // 如果点击的是下拉箭头区域（虽然现在是一体的，但可以通过类名区分如果做了分离）
+  // 或者我们简单点：：点击按钮本身就是开关。菜单通过 hover 或者长按？
+  // 不，用户要求“点击开启关闭”。也就是按钮本身是 Switch。
+  // 那比例怎么选？-> 只有点击箭头（.dropdown-arrow）才弹出菜单？
+
+  if (e.target.classList.contains('dropdown-arrow') || e.target.closest('.dropdown-arrow')) {
+    // 点击了箭头 -> 切换菜单显示
+    const isOpen = portraitMenu.classList.contains('open');
+    if (isOpen) {
+      portraitMenu.classList.remove('open');
+    } else {
+      portraitMenu.classList.add('open');
+    }
+  } else {
+    // 点击了按钮主体 -> 切换开关状态
+    togglePortraitMode();
+  }
+});
+
+// 点击外部关闭菜单
+document.addEventListener('click', (e) => {
+  if (!portraitDropdown.contains(e.target)) {
+    portraitMenu.classList.remove('open');
+  }
+});
+
+// 菜单选择比例
+portraitMenu.addEventListener('click', (e) => {
+  const item = e.target.closest('.menu-item');
+  if (!item) return;
+
+  const ratio = item.dataset.ratio;
+  if (ratio) { // 移除了 'off' 逻辑，因为菜单里没有关闭了
+    currentRatio = ratio;
+    if (!isPortraitMode) {
+      togglePortraitMode(true); // 选比例自然要开启
+    } else {
+      updatePortraitUI(); // 仅更新比例
+    }
+    portraitMenu.classList.remove('open');
+  }
+});
+
+function togglePortraitMode(forceState = null) {
+  if (forceState !== null) {
+    isPortraitMode = forceState;
+  } else {
+    isPortraitMode = !isPortraitMode;
+  }
+
+  updatePortraitUI();
+
+  if (isPortraitMode) {
+    // 开启时，如果还没选过比例，默认 9:16
+    if (currentRatio === 'off') currentRatio = '9:16';
+    updateCropBox();
+  } else {
+    cropOverlay.classList.remove('active');
+  }
+}
+
+function updatePortraitUI() {
+  if (isPortraitMode) {
+    portraitBtn.classList.add('active');
+    portraitRatio.textContent = currentRatio;
+    posButtons.classList.add('visible');
+    cropOverlay.classList.add('active');
+
+    // Update menu active state
+    document.querySelectorAll('.menu-item').forEach(item => {
+      item.classList.toggle('active', item.dataset.ratio === currentRatio);
+    });
+
+    updateCropBox();
+    updatePosButtonsState(); // Update position buttons
+  } else {
+    portraitBtn.classList.remove('active');
+    portraitRatio.textContent = 'OFF';
+    posButtons.classList.remove('visible');
+    cropOverlay.classList.remove('active');
+
+    document.querySelectorAll('.menu-item').forEach(item => {
+      item.classList.remove('active');
+    });
+  }
+}
+
+// --- 快进/快退逻辑更新 ---
+const seekStepInput = document.getElementById('seekStepInput');
+
+function getSeekStep() {
+  const val = parseFloat(seekStepInput.value);
+  return isNaN(val) || val <= 0 ? 5 : val;
+}
+
+// Position Buttons
+posButtons?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.pos-btn');
+  if (!btn) return;
+
+  const pos = btn.dataset.pos;
+  switch (pos) {
+    case 'left': cropPositionPct = 0; break;
+    case 'center': cropPositionPct = 50; break;
+    case 'right': cropPositionPct = 100; break;
+  }
+
+  updateCropBox();
+  updatePosButtonsState();
+});
+
+function updatePosButtonsState() {
+  document.querySelectorAll('.pos-btn').forEach(btn => {
+    const pos = btn.dataset.pos;
+    let isActive = false;
+    if (pos === 'left' && cropPositionPct === 0) isActive = true;
+    if (pos === 'center' && Math.abs(cropPositionPct - 50) < 1) isActive = true;
+    if (pos === 'right' && cropPositionPct === 100) isActive = true;
+
+    btn.classList.toggle('active', isActive);
+  });
+}
+
+// Calculate crop box dimensions based on video and ratio
+function getCropDimensions() {
+  if (!videoPlayer.videoWidth || !videoPlayer.videoHeight) return null;
+
+  const videoRect = videoPlayer.getBoundingClientRect();
+  const videoAspect = videoPlayer.videoWidth / videoPlayer.videoHeight;
+
+  // Calculate displayed video dimensions (accounting for object-fit: contain)
+  let displayWidth, displayHeight;
+  const containerAspect = videoRect.width / videoRect.height;
+
+  if (videoAspect > containerAspect) {
+    displayWidth = videoRect.width;
+    displayHeight = videoRect.width / videoAspect;
+  } else {
+    displayHeight = videoRect.height;
+    displayWidth = videoRect.height * videoAspect;
+  }
+
+  // Calculate crop box dimensions
+  const targetRatio = RATIOS[currentRatio];
+  let cropWidth, cropHeight;
+
+  cropHeight = displayHeight;
+  cropWidth = cropHeight * targetRatio;
+
+  if (cropWidth > displayWidth) {
+    cropWidth = displayWidth;
+    cropHeight = cropWidth / targetRatio;
+  }
+
+  const offsetX = (videoRect.width - displayWidth) / 2;
+  const offsetY = (videoRect.height - displayHeight) / 2;
+  const maxLeft = displayWidth - cropWidth;
+  const cropLeft = offsetX + (cropPositionPct / 100) * maxLeft;
+
+  return {
+    width: cropWidth,
+    height: cropHeight,
+    left: cropLeft,
+    top: offsetY,
+    displayWidth,
+    displayHeight,
+    offsetX,
+    offsetY,
+    maxLeft
+  };
+}
+
+function updateCropBox() {
+  if (!isPortraitMode || !fileLoaded) return;
+
+  const dims = getCropDimensions();
+  if (!dims) return;
+
+  cropBox.style.width = `${dims.width}px`;
+  cropBox.style.height = `${dims.height}px`;
+  cropBox.style.left = `${dims.left}px`;
+  cropBox.style.top = `${dims.top}px`;
+  cropBox.style.transform = 'none';
+}
+
+// Update crop box on video load and resize
+videoPlayer.addEventListener('loadedmetadata', updateCropBox);
+window.addEventListener('resize', updateCropBox);
+
+// Drag Crop Box
+cropBox?.addEventListener('mousedown', startCropDrag);
+cropBox?.addEventListener('touchstart', startCropDrag, { passive: false });
+
+function startCropDrag(e) {
+  if (!isPortraitMode) return;
+  e.preventDefault();
+  isDraggingCrop = true;
+
+  const startX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+  const startLeft = parseFloat(cropBox.style.left) || 0;
+
+  function onMove(e) {
+    if (!isDraggingCrop) return;
+    const clientX = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+    const deltaX = clientX - startX;
+
+    const dims = getCropDimensions();
+    if (!dims) return;
+
+    let newLeft = startLeft + deltaX;
+    newLeft = Math.max(dims.offsetX, Math.min(dims.offsetX + dims.maxLeft, newLeft));
+
+    cropBox.style.left = `${newLeft}px`;
+
+    cropPositionPct = dims.maxLeft > 0 ? ((newLeft - dims.offsetX) / dims.maxLeft) * 100 : 50;
+    cropPositionPct = Math.max(0, Math.min(100, cropPositionPct));
+
+    updatePosButtonsState();
+  }
+
+  function onEnd() {
+    isDraggingCrop = false;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onEnd);
+}
+
+// Get crop coordinates for actual video pixels
+function getCropCoordinates() {
+  if (!isPortraitMode || !videoPlayer.videoWidth) return null;
+
+  const targetRatio = RATIOS[currentRatio];
+  const videoWidth = videoPlayer.videoWidth;
+  const videoHeight = videoPlayer.videoHeight;
+
+  let cropWidth, cropHeight;
+
+  cropHeight = videoHeight;
+  cropWidth = cropHeight * targetRatio;
+
+  if (cropWidth > videoWidth) {
+    cropWidth = videoWidth;
+    cropHeight = cropWidth / targetRatio;
+  }
+
+  const maxX = videoWidth - cropWidth;
+  const cropX = (cropPositionPct / 100) * maxX;
+  const cropY = (videoHeight - cropHeight) / 2;
+
+  return {
+    x: Math.round(cropX),
+    y: Math.round(cropY),
+    width: Math.round(cropWidth),
+    height: Math.round(cropHeight)
+  };
+}
+
+// Export for use in extraction
+window.getCropCoordinates = getCropCoordinates;
+window.isPortraitMode = () => isPortraitMode;
+
