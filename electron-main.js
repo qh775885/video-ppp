@@ -26,6 +26,14 @@ function createWindow() {
     // Always load the built file since our 'dev' script is "vite build && electron ."
     // This allows us to see changes without running a separate dev server.
     win.loadFile(path.join(__dirname, 'dist/index.html'));
+
+    // 方便调试：F12 打开/关闭 开发者工具
+    win.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'F12' && input.type === 'keyDown') {
+            win.webContents.toggleDevTools();
+            event.preventDefault(); // 避免触发默认行为
+        }
+    });
 }
 
 // 监听渲染进程的“选文件夹”请求

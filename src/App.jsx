@@ -131,8 +131,11 @@ function App() {
         setCurrentTime(e.target.currentTime);
     };
 
+    const [isVerticalContent, setIsVerticalContent] = useState(false); // Detect if loaded video is vertical
+
     const onDurationChange = (e) => {
         setDuration(e.target.duration);
+        setIsVerticalContent(e.target.videoHeight > e.target.videoWidth);
     };
 
     const onEnded = () => {
@@ -305,7 +308,7 @@ function App() {
         <div className="flex h-screen w-screen bg-black overflow-hidden font-sans text-sm select-none">
 
             {/* Zone A: The Stage */}
-            <div className="relative flex-1 flex flex-col items-center justify-center bg-black group w-full h-full">
+            <div className={`relative flex-1 flex flex-col items-center justify-center bg-black group w-full h-full transition-[padding] duration-300 ${isVerticalContent ? 'pb-40' : ''}`}>
                 <VideoStage
                     videoFile={videoFile}
                     onFileLoaded={setVideoFile}

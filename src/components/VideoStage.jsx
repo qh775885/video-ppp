@@ -68,12 +68,24 @@ export function VideoStage({
         });
     };
 
-    // 监听 resize 和视频加载
+    const containerRef = useRef(null);
+
+    // 监听 resize (Container Size Changes)
     useEffect(() => {
-        window.addEventListener('resize', updateMaskDimensions);
-        updateMaskDimensions(); // Initial calculation
-        return () => window.removeEventListener('resize', updateMaskDimensions);
-    }, [videoFile, portraitRatio]); // Re-calc when video changes or mode toggles
+        if (!containerRef.current) return;
+
+        const observer = new ResizeObserver(() => {
+            updateMaskDimensions();
+        });
+
+        observer.observe(containerRef.current);
+
+        // Initial calc
+        // We might need a small delay if the video just loaded, 
+        // but onLoadedMetadata handles the first calc.
+
+        return () => observer.disconnect();
+    }, [videoFile, portraitRatio]); // Re-attach if critical dependencies change
 
     // --- Mask Drag Logic ---
     const isMaskDragging = useRef(false);
@@ -166,6 +178,7 @@ export function VideoStage({
 
     return (
         <div
+            ref={containerRef}
             className={`relative flex-1 flex items-center justify-center bg-black group w-full h-full overflow-hidden ${dragActive ? 'bg-zinc-900/50' : ''}`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
