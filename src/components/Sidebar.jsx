@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Trash2, FolderOpen, Image as ImageIcon, Download, X, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDir }) {
@@ -48,7 +49,7 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                     <div className="flex flex-col min-w-0">
                         <span className="text-[10px] text-zinc-500 font-bold mb-0.5">保存位置</span>
                         <span className="text-xs text-zinc-300 truncate" title={cacheDir || "未设置"}>
-                            {cacheDir ? "已启用自动保存" : "未设置 (仅内存预览)"}
+                            {cacheDir || "未设置 (仅内存预览)"}
                         </span>
                     </div>
                     <button
@@ -89,11 +90,12 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                             <span className="text-xs">暂无截图</span>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 gap-2 items-start">
                             {frames.map((frame, index) => (
                                 <div
                                     key={frame.id}
-                                    className="group relative bg-zinc-900/50 rounded-lg border border-white/5 overflow-hidden hover:border-indigo-500/50 transition-all aspect-video flex items-center justify-center cursor-zoom-in"
+                                    className="group relative bg-zinc-900/50 rounded-lg border border-white/5 overflow-hidden hover:border-indigo-500/50 transition-all flex items-center justify-center cursor-zoom-in"
+                                    style={{ aspectRatio: frame.isPortrait ? '9/16' : '16/9' }}
                                     onClick={() => setPreviewIndex(index)}
                                 >
                                     {/* Thumbnail: Contain to show full image within the square/video aspect */}
@@ -132,8 +134,8 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                 </button>
             </div>
 
-            {/* Lightbox Modal (Full Screen with Nav) */}
-            {previewIndex !== -1 && currentFrame && (
+            {/* Lightbox Modal (Full Screen with Nav) - Usage of Portal to break out of Sidebar container */}
+            {previewIndex !== -1 && currentFrame && createPortal(
                 <div
                     className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center animate-in fade-in duration-200 select-none"
                     onClick={() => setPreviewIndex(-1)}
@@ -176,7 +178,8 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                             <X size={24} />
                         </button>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

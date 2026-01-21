@@ -195,17 +195,35 @@ function App() {
                 };
 
                 // Auto-Save if directory is set
-                if (cacheDir) {
+                if (cacheDir && videoFile) {
                     try {
                         const fs = window.require('fs');
                         const path = window.require('path');
+
+                        // Helper to sanitize folder name (remove illegal chars and trailing dots/spaces)
+                        const sanitize = (name) => {
+                            // Remove extension first
+                            const nameNoExt = name.substring(0, name.lastIndexOf('.')) || name;
+                            return nameNoExt
+                                .replace(/[<>:"/\\|?*]/g, '') // Remove illegal chars
+                                .replace(/[\s.]+$/g, '')      // Remove trailing spaces/dots (Win issue)
+                                .trim();
+                        };
+
+                        const subDirName = sanitize(videoFile.name);
+                        const targetDir = path.join(cacheDir, subDirName);
+
+                        if (!fs.existsSync(targetDir)) {
+                            fs.mkdirSync(targetDir, { recursive: true });
+                        }
+
                         const buffer = Buffer.from(await blob.arrayBuffer());
                         // Filename: frame_MMSS_ms.jpg
                         const m = Math.floor(time / 60).toString().padStart(2, '0');
                         const s = Math.floor(time % 60).toString().padStart(2, '0');
                         const ms = Math.floor((time % 1) * 1000).toString().padStart(3, '0');
                         const filename = `frame_${m}${s}_${ms}.jpg`;
-                        const fullPath = path.join(cacheDir, filename);
+                        const fullPath = path.join(targetDir, filename);
 
                         fs.writeFileSync(fullPath, buffer);
                         newFrame.filePath = fullPath;
