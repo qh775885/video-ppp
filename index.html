@@ -11,7 +11,7 @@
 <body>
   <header>
     <h1>视频截图神器</h1>
-    <span class="version-tag" id="versionTag" title="点击查看作者">v1.0.2</span>
+    <span class="version-tag" id="versionTag" title="点击查看作者">v1.0.3</span>
   </header>
 
   <main>
@@ -69,6 +69,12 @@
                 <span class="btn-text">⚡ 提取</span>
                 <div class="btn-progress" id="btnProgress"></div>
               </button>
+              <div class="multiplier-combo">
+                <span class="multiplier-label">×</span>
+                <input type="number" id="multiplierInput" class="multiplier-input" value="1" min="0.1" max="30"
+                  step="0.1" title="倍数：每秒截取的帧数">
+                <span class="multiplier-preview" id="multiplierPreview" title="区间时长 → 计算张数">--</span>
+              </div>
             </div>
           </div>
         </div>
@@ -133,7 +139,7 @@
     <div class="about-content">
       <button id="aboutClose" class="about-close">&times;</button>
       <h2>视频截图神器</h2>
-      <p class="about-version">v1.0.2</p>
+      <p class="about-version">v1.0.3</p>
 
       <div class="about-section">
         <h3>⌨️ 快捷键</h3>

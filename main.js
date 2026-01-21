@@ -57,6 +57,10 @@ const endTimeInput = el('endTimeInput');
 const setStartBtn = el('setStartBtn');
 const setEndBtn = el('setEndBtn');
 
+// Multiplier Feature
+const multiplierInput = el('multiplierInput');
+const multiplierPreview = el('multiplierPreview');
+
 const lightbox = el('lightbox');
 const lightboxImg = el('lightboxImg');
 const lbCount = el('lbCount');
@@ -185,7 +189,86 @@ function updateTarget(delta) {
   val = Math.max(1, Math.min(300, val + delta));
   targetCountInput.value = val;
   localStorage.setItem('video-extractor-target-count', val);
+  // 当手动修改张数时，反算倍数
+  updateMultiplierFromCount();
 }
+
+// ========== Multiplier Feature Logic ==========
+const savedMultiplier = localStorage.getItem('video-extractor-multiplier');
+if (savedMultiplier) multiplierInput.value = savedMultiplier;
+
+// 获取当前区间秒数
+function getRangeDurationSeconds() {
+  if (!videoDuration) return 0;
+  const rangeStart = parseTimeInput(startTimeInput.value);
+  let rangeEnd = parseTimeInput(endTimeInput.value);
+  if (rangeEnd <= rangeStart || rangeEnd > videoDuration) rangeEnd = videoDuration;
+  return Math.max(0, rangeEnd - rangeStart);
+}
+
+// 根据倍数更新张数
+function updateCountFromMultiplier() {
+  const duration = getRangeDurationSeconds();
+  const multiplier = parseFloat(multiplierInput.value) || 1;
+  if (duration > 0) {
+    const calculatedCount = Math.max(1, Math.min(300, Math.round(duration * multiplier)));
+    targetCountInput.value = calculatedCount;
+    localStorage.setItem('video-extractor-target-count', calculatedCount);
+  }
+  updateMultiplierPreview();
+}
+
+// 根据张数反算倍数
+function updateMultiplierFromCount() {
+  const duration = getRangeDurationSeconds();
+  const count = parseInt(targetCountInput.value) || 12;
+  if (duration > 0) {
+    const calculatedMultiplier = Math.round((count / duration) * 10) / 10; // 保留1位小数
+    multiplierInput.value = Math.max(0.1, Math.min(30, calculatedMultiplier));
+    localStorage.setItem('video-extractor-multiplier', multiplierInput.value);
+  }
+  updateMultiplierPreview();
+}
+
+// 更新预览显示
+function updateMultiplierPreview() {
+  const duration = getRangeDurationSeconds();
+  const count = parseInt(targetCountInput.value) || 12;
+  
+  if (duration <= 0) {
+    multiplierPreview.textContent = '--';
+    multiplierPreview.classList.remove('warning');
+    return;
+  }
+  
+  // 显示 "区间时长s → 张数张"
+  const durationDisplay = duration >= 60 
+    ? `${Math.floor(duration / 60)}m${Math.round(duration % 60)}s` 
+    : `${Math.round(duration)}s`;
+  
+  multiplierPreview.textContent = `${durationDisplay}→${count}张`;
+  
+  // 如果张数过多，显示警告色
+  if (count > 100) {
+    multiplierPreview.classList.add('warning');
+  } else {
+    multiplierPreview.classList.remove('warning');
+  }
+}
+
+// 监听倍数输入变化
+multiplierInput.addEventListener('input', () => {
+  let val = parseFloat(multiplierInput.value);
+  if (isNaN(val) || val < 0.1) val = 0.1;
+  if (val > 30) val = 30;
+  localStorage.setItem('video-extractor-multiplier', val);
+  updateCountFromMultiplier();
+});
+
+// 监听张数输入变化（手动修改时反算倍数）
+targetCountInput.addEventListener('input', () => {
+  updateMultiplierFromCount();
+});
 
 // Video Controls
 playPauseBtn.addEventListener('click', togglePlay);
@@ -407,6 +490,8 @@ function updateRangeUI() {
 
 function updateTimeInputsFromRange() {
   if (!videoDuration) return;
+  // 区间变化时，根据当前倍数重新计算张数
+  updateCountFromMultiplier();
   const s = (rangeStartPct / 100) * videoDuration;
   const e = (rangeEndPct / 100) * videoDuration;
   startTimeInput.value = formatTimeMMSS(s);
@@ -537,6 +622,9 @@ function handleFile(file) {
     rangeStartPct = 0;
     rangeEndPct = 100;
     updateRangeUI();
+    
+    // 视频加载后更新倍数预览
+    updateCountFromMultiplier();
   };
 
   fileLoaded = true;
