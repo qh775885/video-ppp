@@ -67,6 +67,7 @@ function App() {
     };
 
     const updateCountFromMultiplier = (mult, start, end) => {
+        if (!mult || isNaN(mult)) return; // Don't update if invalid
         const dur = end - start;
         if (dur > 0) {
             setTargetCount(Math.max(1, Math.round(dur * mult)));
@@ -597,49 +598,95 @@ function FloatingCockpit({
                     </button>
                 </div>
 
-                {/* Right: Extraction Panel */}
-                <div className="flex items-center gap-2 bg-black/30 p-1 pl-3 rounded-xl border border-white/5">
+                {/* Right: Extraction Panel - Compact 1:2:1 */}
+                <div className="flex items-center h-[48px] px-1 rounded-xl bg-[#0a0a0b]/80 border border-white/10 shadow-2xl backdrop-blur-xl ring-1 ring-white/5 mx-0">
 
-                    {/* Inputs */}
-                    <div className="flex items-center gap-4 border-r border-white/10 pr-3 mr-1">
-                        <div className="flex items-center gap-1.5" title="目标数量">
-                            <Hash size={13} className="text-zinc-500" />
-                            <input
-                                type="number"
-                                value={targetCount}
-                                onChange={(e) => onTargetCountChange(parseInt(e.target.value) || 1)}
-                                className="w-7 bg-transparent text-center font-mono text-sm font-bold text-white focus:outline-none placeholder-zinc-700"
-                            />
-                        </div>
-                        <div className="flex items-center gap-1.5" title="密度倍数">
-                            <X size={13} className="text-zinc-500" />
-                            <input
-                                type="number"
-                                step="0.1"
-                                value={multiplier}
-                                onChange={(e) => onMultiplierChange(parseFloat(e.target.value) || 1)}
-                                className="w-8 bg-transparent text-center font-mono text-sm font-bold text-indigo-400 focus:outline-none"
-                            />
-                        </div>
+                    {/* 1. Left: Count (Ratio: ~1) */}
+                    <div className="flex flex-col items-center justify-center w-[44px]">
+                        <span className="text-[9px] text-zinc-500 font-medium select-none tracking-tight leading-none mb-0.5">张数</span>
+                        <input
+                            type="number"
+                            value={targetCount}
+                            onChange={(e) => onTargetCountChange(e.target.value === '' ? '' : parseInt(e.target.value))}
+                            onBlur={() => { if (!targetCount) onTargetCountChange(1); }}
+                            className="w-full bg-transparent text-center font-mono text-base font-bold text-zinc-200 focus:text-white focus:outline-none border-none p-0 leading-none"
+                        />
                     </div>
 
-                    {/* Action Button */}
-                    <button
-                        onClick={onExtract}
-                        disabled={isExtracting}
-                        className={`h-8 pl-3 pr-4 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${isExtracting
-                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                            : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 active:scale-95'
-                            }`}
-                    >
-                        {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} className="fill-current" />}
-                        <div className="flex flex-col items-start leading-tight">
-                            <span>提取</span>
-                            <span className="text-[8px] font-mono opacity-60 normal-case tracking-wide">
-                                {extractDuration.toFixed(1)}s
-                            </span>
+                    {/* Divider */}
+                    <div className="w-px h-5 bg-white/5"></div>
+
+                    {/* 2. Center: Extract Button (Ratio: ~2) */}
+                    <div className="flex items-center justify-center px-1.5 w-[100px]">
+                        <button
+                            onClick={onExtract}
+                            disabled={isExtracting}
+                            className={`group relative w-full h-8 rounded-lg font-bold transition-all duration-300 flex items-center justify-center gap-1 overflow-hidden ring-1 ring-inset ${isExtracting
+                                    ? 'bg-zinc-800 text-zinc-500 ring-white/5 cursor-not-allowed'
+                                    : 'bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_10px_rgba(79,70,229,0.3),inset_0_1px_1px_rgba(255,255,255,0.3)] ring-white/10 hover:shadow-[0_4px_15px_rgba(79,70,229,0.4),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:scale-[1.02] active:scale-[0.98]'
+                                }`}
+                        >
+                            {/* Inner Shine Effect */}
+                            {!isExtracting && <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>}
+
+                            {isExtracting ? (
+                                <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                                <>
+                                    <Zap size={13} className="fill-current drop-shadow-sm" />
+                                    <span className="text-xs tracking-wide drop-shadow-sm">提取</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+
+                    {/* Divider */}
+                    <div className="w-px h-5 bg-white/5"></div>
+
+                    {/* 3. Right: Meta Info (Ratio: ~1) */}
+                    <div className="flex flex-col items-center justify-center w-[44px] gap-0.5">
+
+                        {/* Duration */}
+                        <div className="text-[10px] font-mono font-bold text-indigo-300 leading-none">
+                            {Math.floor(extractDuration)}s
                         </div>
-                    </button>
+
+                        {/* Divider Line */}
+                        <div className="w-5 h-px bg-white/10 my-0.5"></div>
+
+                        {/* Multiplier */}
+                        <div className="relative group/mult flex flex-col items-center w-full">
+                            <div className="text-[9px] font-bold text-zinc-400 group-hover/mult:text-zinc-200 transition-colors cursor-pointer flex items-center justify-center gap-0.5 w-full">
+                                <span className="opacity-50">×</span>
+                                <span>{multiplier}</span>
+                            </div>
+
+                            {/* Dropdown Menu (Upwards) */}
+                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 invisible group-hover/mult:opacity-100 group-hover/mult:visible transition-all duration-200 z-50">
+                                <div className="bg-[#18181b]/95 backdrop-blur-xl border border-white/10 rounded-xl p-2 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] grid grid-cols-3 gap-1 w-[90px]">
+                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                                        <button
+                                            key={num}
+                                            onClick={(e) => { e.stopPropagation(); onMultiplierChange(num); }}
+                                            className={`h-6 w-full rounded-md flex items-center justify-center text-[10px] font-bold font-mono transition-all ${multiplier === num
+                                                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
+                                                    : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-white'
+                                                }`}
+                                        >
+                                            {num}
+                                        </button>
+                                    ))}
+                                    <input
+                                        type="number"
+                                        className="col-span-3 h-5 bg-black/20 rounded-md text-center text-[9px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 mt-1 placeholder-zinc-600 border border-white/5 focus:border-indigo-500/30 transition-all"
+                                        placeholder="自定义"
+                                        value={multiplier}
+                                        onChange={(e) => onMultiplierChange(parseFloat(e.target.value) || 1)}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
