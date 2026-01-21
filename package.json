@@ -8,8 +8,7 @@
     "dev": "vite build && electron .",
     "web": "vite",
     "preview": "vite preview",
-    "build:local": "vite build && electron-builder --dir",
-    "build:setup": "vite build && electron-builder --win nsis"
+    "build": "vite build && electron-builder --win --dir"
   },
   "build": {
     "appId": "com.yourname.videoextractor",

@@ -36,13 +36,10 @@ npm install
 # 2. 启动开发模式
 npm run dev
 
-# 3. 构建免安装版 (Unpacked)
-# 输出到 release/2.0.0/win-unpacked/，适合自己使用和调试
-npm run build:local
-
-# 4. 构建安装包 (Setup.exe)
-# 输出到 release/2.0.0/，适合分发
-npm run build:setup
+# 3. 生产环境构建 (Build)
+# 同时生成免安装版 (win-unpacked) 和安装包 (Setup.exe)
+# 输出目录：release/vX.X.X/
+npm run build
 ```
 
 ## 📦 技术栈
