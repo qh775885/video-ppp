@@ -31,14 +31,17 @@
 # 安装依赖
 npm install
 
-# 开发模式
-npm run electron:dev
+# 开发模式（启动 Electron 应用）
+npm run dev
 
-# 构建测试版（不打包安装程序）
-npm run electron:build
+# 构建本地软件（不打包安装程序）
+npm run build
 
-# 打包发布
+# 打包发布（生成安装程序）
 npm run dist
+
+# 纯网页开发（可选）
+npm run web
 ```
 
 ## 📦 技术栈
