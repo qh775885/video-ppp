@@ -43,17 +43,18 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
         <div className="flex flex-col h-full bg-zinc-950/90 backdrop-blur-xl border-l border-white/10 w-[320px]">
             {/* Settings Segment */}
             <div className="p-5 flex flex-col gap-4 border-b border-white/5 shrink-0">
-                <h3 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">设置</h3>
+                <h3 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">存储设置</h3>
                 <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-900/50 border border-white/5 group hover:border-indigo-500/30 transition-colors">
                     <div className="flex flex-col min-w-0">
-                        <span className="text-[10px] text-zinc-500 font-bold mb-0.5">缓存目录</span>
-                        <span className="text-xs text-zinc-300 truncate" title={cacheDir || "默认未设置"}>
-                            {cacheDir ? "已选择目录" : "默认临时目录"}
+                        <span className="text-[10px] text-zinc-500 font-bold mb-0.5">保存位置</span>
+                        <span className="text-xs text-zinc-300 truncate" title={cacheDir || "未设置"}>
+                            {cacheDir ? "已启用自动保存" : "未设置 (仅内存预览)"}
                         </span>
                     </div>
                     <button
                         onClick={onSelectCacheDir}
-                        className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
+                        className={`p-2 rounded-lg transition-all ${cacheDir ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white'}`}
+                        title="更改保存目录"
                     >
                         <FolderOpen size={14} />
                     </button>
@@ -122,12 +123,12 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                     onClick={onDownload}
                     disabled={frames.length === 0}
                     className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl border font-bold text-xs transition-all active:scale-95 ${frames.length > 0
-                            ? 'bg-zinc-800 hover:bg-zinc-700 border-white/10 text-white hover:border-white/20'
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
+                        ? 'bg-zinc-800 hover:bg-zinc-700 border-white/10 text-white hover:border-white/20'
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
                         }`}
                 >
                     <FolderOpen size={16} />
-                    <span>打开输出目录</span>
+                    <span>打开保存文件夹</span>
                 </button>
             </div>
 

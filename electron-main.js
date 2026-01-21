@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 
 function createWindow() {
@@ -35,6 +35,12 @@ ipcMain.handle('select-folder', async () => {
     });
     if (result.canceled) return null;
     return result.filePaths[0]; // 返回真实的硬盘绝对路径
+});
+
+ipcMain.handle('open-folder', async (event, folderPath) => {
+    if (folderPath) {
+        await shell.openPath(folderPath);
+    }
 });
 
 app.whenReady().then(() => {

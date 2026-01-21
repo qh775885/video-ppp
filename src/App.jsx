@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, FastForward, Image as ImageIcon, Zap, Scissors, Settings, FolderOpen, Loader2 } from 'lucide-react';
+import { Play, Pause, FastForward, Image as ImageIcon, Zap, Scissors, Settings, FolderOpen, Loader2, ScanLine, Hash, X } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { VideoStage } from './components/VideoStage';
 
@@ -24,14 +24,91 @@ function App() {
     const [frames, setFrames] = useState([]);
     const [seekStep, setSeekStep] = useState(5);
     const [cacheDir, setCacheDir] = useState("");
-    const [portraitRatio, setPortraitRatio] = useState(null); // null = off, "9:16" = on
-    const [cropOffset, setCropOffset] = useState(0); // Horizontal offset ratio (-0.5 to 0.5 relative to diff)
-    const [targetCount, setTargetCount] = useState(12); // Default count
+    const [portraitRatio, setPortraitRatio] = useState(null);
+    const [cropOffset, setCropOffset] = useState(0);
+
+    // Extraction Range & Density
+    const [rangeStart, setRangeStart] = useState(0);
+    const [rangeEnd, setRangeEnd] = useState(0); // If 0/null, use duration
+    const [multiplier, setMultiplier] = useState(1); // Density: frames per second
+    const [targetCount, setTargetCount] = useState(12);
     const [isExtracting, setIsExtracting] = useState(false);
 
+    // Sync end range when duration loads
+    useEffect(() => {
+        if (duration > 0 && rangeEnd === 0) {
+            setRangeEnd(duration);
+            // Auto calc count based on initial multiplier 1
+            setTargetCount(Math.max(1, Math.round(duration * 1)));
+        }
+    }, [duration]);
+
+    // Handlers for Range
+    const handleSetStart = () => {
+        const t = videoRefVal ? videoRefVal.currentTime : 0;
+        setRangeStart(Math.min(t, rangeEnd));
+        updateCountFromMultiplier(multiplier, Math.min(t, rangeEnd), rangeEnd);
+    };
+    const handleSetEnd = () => {
+        const t = videoRefVal ? videoRefVal.currentTime : duration;
+        setRangeEnd(Math.max(t, rangeStart));
+        updateCountFromMultiplier(multiplier, rangeStart, Math.max(t, rangeStart));
+    };
+    const handleResetRange = () => {
+        setRangeStart(0);
+        setRangeEnd(duration);
+        updateCountFromMultiplier(multiplier, 0, duration);
+    };
+
+    // Handler for Multiplier Change -> Auto set Count
+    const handleMultiplierChange = (val) => {
+        setMultiplier(val);
+        updateCountFromMultiplier(val, rangeStart, rangeEnd);
+    };
+
+    const updateCountFromMultiplier = (mult, start, end) => {
+        const dur = end - start;
+        if (dur > 0) {
+            setTargetCount(Math.max(1, Math.round(dur * mult)));
+        }
+    };
+
+    // Handler for Count Change -> Update Multiplier display? (Optional, maybe just let them diverge)
+    const handleTargetCountChange = (val) => {
+        setTargetCount(val);
+        // Reverse calc multiplier for display? nah, keep it simple.
+    };
+
     const handleClear = () => setFrames([]);
-    const handleDownload = () => console.log("Open folder");
-    const handleSelectCache = () => console.log("Select cache");
+    // --- Persistence ---
+    useEffect(() => {
+        const saved = localStorage.getItem('video-ppp-cache-dir');
+        if (saved) setCacheDir(saved);
+    }, []);
+
+    const handleSelectCache = async () => {
+        try {
+            const { ipcRenderer } = window.require('electron');
+            const path = await ipcRenderer.invoke('select-folder');
+            if (path) {
+                setCacheDir(path);
+                localStorage.setItem('video-ppp-cache-dir', path);
+            }
+        } catch (e) {
+            console.error("Select folder failed:", e);
+        }
+    };
+
+    const handleDownload = async () => {
+        if (!cacheDir) return;
+        try {
+            const { ipcRenderer } = window.require('electron');
+            await ipcRenderer.invoke('open-folder', cacheDir);
+        } catch (e) {
+            console.error("Open folder failed:", e);
+        }
+    };
+
 
     // Toggle Portrait Mode (Reset offset when toggling)
     const togglePortrait = () => {
@@ -69,6 +146,7 @@ function App() {
         }
     };
 
+
     // --- Capture Logic (Smart Crop with Offset) ---
     // Ensure captureFrame returns a Promise
     const captureFrame = async () => {
@@ -78,30 +156,16 @@ function App() {
         const vHeight = videoRefVal.videoHeight;
         let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
 
-        // 如果开启了竖图模式，计算裁剪区域 (默认居中裁剪)
+        // Smart Crop Logic
         if (portraitRatio === "9:16") {
-            // 目标比例 9/16 = 0.5625
             const targetAspect = 9 / 16;
-            // 假设以高度为基准 (通常是将横屏视频切成竖屏，所以高度占满)
             const targetWidth = vHeight * targetAspect;
-
             if (targetWidth <= vWidth) {
                 sWidth = targetWidth;
-                // 默认居中是 (vWidth - sWidth) / 2
-                // 偏移量：cropOffset * (vWidth - sWidth)
-                // cropOffset 范围建议 -0.5 到 0.5 ?
-                // 不，我们定义 cropOffset 为：从中心点偏移的像素百分比?
-                // 让我们简化：cropOffset 是一个 0~1 的值？
-                // 最佳方案：cropOffset 是 source image 上的像素偏移。
-                // 但那样不好拖动。
-                // 我们用 ratio: offset = 0 (Center), -1 (Left Aligned), 1 (Right Aligned)
-
                 const maxOffset = (vWidth - sWidth) / 2;
-                const currentOffsetPx = cropOffset * maxOffset; // cropOffset is -1 to 1
-
+                const currentOffsetPx = cropOffset * maxOffset;
                 sx = (vWidth - sWidth) / 2 + currentOffsetPx;
             } else {
-                // 极端情况：视频比 9:16 还窄？(几乎不可能，除非本来就是竖屏且更细)
                 sHeight = vWidth / targetAspect;
                 sy = (vHeight - sHeight) / 2;
             }
@@ -113,64 +177,77 @@ function App() {
             canvas.height = sHeight;
             const ctx = canvas.getContext('2d');
 
-            // Draw video frame with crop
-            // ctx.drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
             ctx.drawImage(videoRefVal, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
 
-            canvas.toBlob((blob) => {
+            canvas.toBlob(async (blob) => {
                 if (!blob) { resolve(); return; }
                 const url = URL.createObjectURL(blob);
+                const time = videoRefVal.currentTime;
+
+                // Construct Frame Object
                 const newFrame = {
                     id: Date.now() + Math.random(),
                     url: url,
-                    time: videoRefVal.currentTime,
+                    time: time,
                     blob: blob,
-                    isPortrait: !!portraitRatio // 标记是否为竖图
+                    isPortrait: !!portraitRatio,
+                    filePath: null
                 };
+
+                // Auto-Save if directory is set
+                if (cacheDir) {
+                    try {
+                        const fs = window.require('fs');
+                        const path = window.require('path');
+                        const buffer = Buffer.from(await blob.arrayBuffer());
+                        // Filename: frame_MMSS_ms.jpg
+                        const m = Math.floor(time / 60).toString().padStart(2, '0');
+                        const s = Math.floor(time % 60).toString().padStart(2, '0');
+                        const ms = Math.floor((time % 1) * 1000).toString().padStart(3, '0');
+                        const filename = `frame_${m}${s}_${ms}.jpg`;
+                        const fullPath = path.join(cacheDir, filename);
+
+                        fs.writeFileSync(fullPath, buffer);
+                        newFrame.filePath = fullPath;
+                    } catch (err) {
+                        console.error("Auto-save failed:", err);
+                    }
+                }
+
                 setFrames(prev => [newFrame, ...prev]);
                 resolve();
             }, 'image/jpeg', 0.95);
         });
     };
 
-    // --- Batch Extraction (Smart Distributed) ---
+    // --- Batch Extraction (Smart Distributed with Range) ---
     const handleSmartExtract = async () => {
         if (!videoRefVal || isExtracting) return;
         setIsExtracting(true);
 
-        const startT = videoRefVal.currentTime;
-        const remainingDur = duration - startT;
+        // Use Range instead of full duration
+        const effectiveStart = rangeStart;
+        const effectiveEnd = (rangeEnd > 0) ? rangeEnd : duration;
+        const activeDuration = effectiveEnd - effectiveStart;
 
-        // 如果剩余时间太短，就不执行了
-        if (remainingDur <= 0.5) {
+        if (activeDuration <= 0.5) {
             setIsExtracting(false);
             return;
         }
 
-        // 计算智能步长 (均分模式)
-        // 例如：剩余 10s，要 5 张 -> 步长 2s
-        const interval = remainingDur / targetCount;
+        // Interval
+        const interval = activeDuration / targetCount;
 
-        // We will capture targetCount frames
         for (let i = 0; i < targetCount; i++) {
-            // Calculate exact time for this frame
-            // i=0 -> startT
-            // i=1 -> startT + interval
-            const timeToCapture = startT + (i * interval);
+            const timeToCapture = effectiveStart + (i * interval);
+            if (timeToCapture > effectiveEnd) break;
 
-            // 1. Seek to target time
             videoRefVal.currentTime = timeToCapture;
             setCurrentTime(timeToCapture);
-
-            // 2. Wait for frame update (crucial!)
-            // using 450ms to be safe for seek latency
             await new Promise(r => setTimeout(r, 450));
-
-            // 3. Capture
             await captureFrame();
         }
 
-        // Finish
         setIsExtracting(false);
     };
 
@@ -196,12 +273,15 @@ function App() {
                     e.preventDefault();
                     handleSeek(Math.min(duration, currentTime + seekStep));
                     break;
+                // Add shortcuts for In/Out points? Maybe I and O?
+                case 'KeyI': handleSetStart(); break;
+                case 'KeyO': handleSetEnd(); break;
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [videoRefVal, isPlaying, currentTime, duration, seekStep, captureFrame]);
+    }, [videoRefVal, isPlaying, currentTime, duration, seekStep, captureFrame, rangeStart, rangeEnd]);
 
     return (
         <div className="flex h-screen w-screen bg-black overflow-hidden font-sans text-sm select-none">
@@ -233,11 +313,27 @@ function App() {
                             duration={duration}
                             onSeek={handleSeek}
 
-                            portraitRatio={portraitRatio} // <--- 传递给 Controlbar
-                            onTogglePortrait={togglePortrait} // <--- 传递切换函数
+                            // Range Props
+                            rangeStart={rangeStart}
+                            rangeEnd={rangeEnd}
+                            onUpdateStart={(val) => {
+                                setRangeStart(val);
+                                updateCountFromMultiplier(multiplier, val, rangeEnd);
+                            }}
+                            onUpdateEnd={(val) => {
+                                setRangeEnd(val);
+                                updateCountFromMultiplier(multiplier, rangeStart, val);
+                            }}
+                            onResetRange={handleResetRange}
 
-                            targetCount={targetCount} // Pass props
-                            onTargetCountChange={setTargetCount}
+                            portraitRatio={portraitRatio}
+                            onTogglePortrait={togglePortrait}
+
+                            // Extract Props
+                            targetCount={targetCount}
+                            onTargetCountChange={handleTargetCountChange}
+                            multiplier={multiplier}
+                            onMultiplierChange={handleMultiplierChange}
                             isExtracting={isExtracting}
                             onExtract={handleSmartExtract}
                         />
@@ -263,147 +359,265 @@ function FloatingCockpit({
     seekStep, onSeekStepChange,
     isPlaying, onTogglePlay,
     currentTime, duration, onSeek,
+    rangeStart, rangeEnd, onUpdateStart, onUpdateEnd, onResetRange,
     portraitRatio, onTogglePortrait,
     targetCount, onTargetCountChange,
+    multiplier, onMultiplierChange,
     isExtracting, onExtract
 }) {
-    // Seek Bar Logic
-    const progressBarRef = useRef(null);
-    const [isDragging, setIsDragging] = useState(false);
-    const wasPlayingRef = useRef(false);
+    // Local State for Range Mode Toggle
+    // We lift this up if App needs to know, but for UI visibility, local is fine.
+    // However, extraction logic needs to know if we are using range or full.
+    // Local State
+    const [isRangeMode, setIsRangeMode] = useState(false);
 
+    // Refs & Drag State
+    const progressBarRef = useRef(null);
+    const [isDraggingSeek, setIsDraggingSeek] = useState(false);
+    const [draggingHandle, setDraggingHandle] = useState(null);
+
+    // Helper: Calculate Time from MouseX
     const calculateTime = (e) => {
         if (!progressBarRef.current || !duration) return 0;
         const rect = progressBarRef.current.getBoundingClientRect();
+        // Use logic to clamp within [0, rect.width]
         const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-        const pct = x / rect.width;
-        return pct * duration;
+        return (x / rect.width) * duration;
     };
 
-    const handleMouseDown = (e) => {
-        setIsDragging(true);
-        wasPlayingRef.current = isPlaying;
-        if (isPlaying && onTogglePlay) onTogglePlay();
-        onSeek(calculateTime(e));
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
-    };
+    // --- Interaction Handlers ---
 
-    const handleMouseMove = (e) => {
-        onSeek(calculateTime(e));
-    };
+    // 1. Seek / Scrubber
+    const handleSeekMouseDown = (e) => {
+        // Prevent conflict if clicking handles
+        if (e.target.closest('.range-handle')) return;
 
-    const handleMouseUp = (e) => {
-        setIsDragging(false);
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-    };
+        setIsDraggingSeek(true);
+        const t = calculateTime(e);
+        onSeek(t); // Jump immediately
 
-    useEffect(() => {
-        return () => {
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
+        const move = (ev) => onSeek(calculateTime(ev));
+        const up = () => {
+            setIsDraggingSeek(false);
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
         };
-    }, []);
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    };
 
+    // 2. Range Handles
+    const handleHandleMouseDown = (e, type) => {
+        e.stopPropagation();
+        setDraggingHandle(type);
+
+        const move = (ev) => {
+            const t = calculateTime(ev);
+            if (type === 'start') {
+                const max = (rangeEnd > 0 ? rangeEnd : duration) - 0.5;
+                const val = Math.max(0, Math.min(t, max));
+                onUpdateStart(val);
+            } else {
+                const min = rangeStart + 0.5;
+                const val = Math.max(min, Math.min(t, duration));
+                onUpdateEnd(val);
+            }
+        };
+
+        const up = () => {
+            setDraggingHandle(null);
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+        };
+
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    };
+
+    // 3. Toggle Logic
+    const toggleRangeMode = () => {
+        const newMode = !isRangeMode;
+        setIsRangeMode(newMode);
+        if (!newMode) onResetRange(); // Reset when closing
+    };
+
+    // --- Render Helpers ---
     const progressPct = duration ? (currentTime / duration) * 100 : 0;
+    const effectiveEnd = (rangeEnd > 0) ? rangeEnd : duration;
+
+    // Viz Percentages
+    const rStartPct = duration ? (rangeStart / duration) * 100 : 0;
+    const rEndPct = duration ? (effectiveEnd / duration) * 100 : 100;
+    const rWidthPct = rEndPct - rStartPct;
+
+    const extractDuration = isRangeMode ? (effectiveEnd - rangeStart) : duration;
+
+    // Common Button Styles
+    const btnBase = "h-9 flex items-center justify-center rounded-xl transition-all border outline-none select-none";
+    const btnGlass = `${btnBase} bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10 active:scale-95`;
+    const btnActive = `${btnBase} bg-indigo-500/20 border-indigo-500/50 text-indigo-300 shadow-[0_0_10px_rgba(99,102,241,0.2)]`;
+
 
     return (
-        <div className="flex flex-col gap-3 min-w-[640px] p-4 rounded-3xl bg-zinc-900/80 backdrop-blur-2xl border border-white/10 shadow-2xl ring-1 ring-black/20 hover:bg-zinc-900/90 hover:-translate-y-1 transition-all duration-300">
-            {/* Upper: Progress */}
-            <div className="flex items-center gap-3 w-full px-2 select-none">
-                <span className="font-mono text-xs text-zinc-400 min-w-[40px] text-right">{formatTime(currentTime)}</span>
+        <div className="flex flex-col gap-4 min-w-[760px] p-5 rounded-[24px] bg-[#121214]/90 backdrop-blur-2xl border border-white/10 shadow-2xl ring-1 ring-black/40 hover:-translate-y-1 transition-all duration-300">
+
+            {/* 1. Progress Section */}
+            <div className={`flex items-center gap-4 w-full px-1 relative ${isRangeMode ? 'pt-3' : ''} transition-all duration-300`}>
+                <span className="font-mono text-xs text-zinc-500 min-w-[44px] text-right font-medium">{formatTime(currentTime)}</span>
+
+                {/* Track Container */}
                 <div
                     ref={progressBarRef}
-                    className="flex-1 h-8 bg-white/5 rounded-lg border border-white/5 relative group cursor-pointer overflow-hidden"
-                    onMouseDown={handleMouseDown}
+                    className="flex-1 h-2 relative group cursor-pointer touch-none"
+                    style={{ marginTop: isRangeMode ? '4px' : '0', marginBottom: isRangeMode ? '4px' : '0' }}
+                    onMouseDown={handleSeekMouseDown}
                 >
-                    <div
-                        className={`absolute top-0 bottom-0 left-0 bg-indigo-500/50 rounded-l-lg ${isDragging ? '' : 'transition-all duration-100 ease-linear'}`}
-                        style={{ width: `${progressPct}%` }}
-                    ></div>
-                    <div
-                        className={`absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)] ${isDragging ? '' : 'transition-all duration-100 ease-linear'}`}
-                        style={{ left: `${progressPct}%` }}
-                    ></div>
-                </div>
-                <span className="font-mono text-xs text-zinc-400 min-w-[40px]">{formatTime(duration)}</span>
-            </div>
-
-            {/* Lower: Controls */}
-            <div className="flex items-center justify-center gap-6 pt-1 relative">
-
-                {/* Left: Playback Controls */}
-                <div className="flex items-center gap-4">
-                    <div className="flex flex-col items-center gap-0.5 group">
-                        <span className="text-[10px] text-zinc-500 font-bold tracking-wider group-hover:text-zinc-400 transition-colors">快进</span>
-                        <div className="flex items-center gap-1 bg-black/20 rounded px-1.5 py-0.5 border border-white/5 hover:border-white/10">
-                            <input
-                                type="number"
-                                className="w-8 bg-transparent text-center font-mono text-xs font-bold focus:outline-none text-zinc-300 no-scrollbar"
-                                value={seekStep}
-                                onChange={(e) => onSeekStepChange(Number(e.target.value))}
-                                min={1}
-                                max={60}
-                            />
-                            <span className="text-[10px] text-zinc-500">秒</span>
-                        </div>
+                    {/* Track Background */}
+                    <div className="absolute top-0 bottom-0 left-0 right-0 bg-white/10 rounded-full overflow-hidden">
+                        {/* Buffered/Range Zone (Blue) */}
+                        <div
+                            className={`absolute top-0 bottom-0 bg-indigo-500/30 transition-opacity duration-300 ${isRangeMode ? 'opacity-100' : 'opacity-0'}`}
+                            style={{ left: `${rStartPct}%`, width: `${rWidthPct}%` }}
+                        ></div>
+                        {/* Progress Fill (White) */}
+                        <div
+                            className="absolute top-0 bottom-0 left-0 bg-white/30"
+                            style={{ width: `${progressPct}%` }}
+                        ></div>
                     </div>
 
-                    <button
-                        onClick={onTogglePlay}
-                        className="h-12 w-12 flex items-center justify-center rounded-2xl bg-white/10 hover:bg-indigo-600 hover:text-white text-zinc-200 transition-all shadow-lg shadow-black/20 active:scale-95"
+                    {/* Playhead (The "White Dot") - High Quality */}
+                    <div
+                        className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.5)] z-20 pointer-events-none transition-transform duration-150 ease-out group-hover:scale-125 ${isDraggingSeek ? 'scale-125 shadow-[0_0_20px_rgba(255,255,255,0.8)]' : ''}`}
+                        style={{ left: `${progressPct}%` }}
                     >
-                        {isPlaying ? <Pause size={24} className="fill-current" /> : <Play size={24} className="fill-current ml-1" />}
+                        {/* Inner Dot for detail */}
+                        <div className="absolute inset-[3px] bg-indigo-50 inset rounded-full opacity-0 group-hover:opacity-20 transition-opacity"></div>
+                    </div>
+
+                    {/* Range Handles (Only in Range Mode) */}
+                    {isRangeMode && (
+                        <>
+                            {/* Start Handle */}
+                            <div
+                                className={`range-handle absolute -top-3 w-4 -ml-2 h-8 cursor-ew-resize z-30 flex flex-col items-center justify-start group/handle`}
+                                style={{ left: `${rStartPct}%` }}
+                                onMouseDown={(e) => handleHandleMouseDown(e, 'start')}
+                            >
+                                <div className={`w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-indigo-400 drop-shadow-lg transition-all group-hover/handle:border-t-white ${draggingHandle === 'start' ? 'border-t-white scale-125' : ''}`}></div>
+                                <div className={`w-px h-3 bg-indigo-400/50 group-hover/handle:bg-white/50 ${draggingHandle === 'start' ? 'bg-white' : ''}`}></div>
+                                {/* Tooltip */}
+                                <div className="absolute -top-7 px-1.5 py-0.5 rounded bg-zinc-800 border border-white/10 text-[10px] font-mono text-zinc-300 opacity-0 group-hover/handle:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                                    {formatTime(rangeStart)}
+                                </div>
+                            </div>
+
+                            {/* End Handle */}
+                            <div
+                                className={`range-handle absolute -top-3 w-4 -ml-2 h-8 cursor-ew-resize z-30 flex flex-col items-center justify-start group/handle`}
+                                style={{ left: `${rEndPct}%` }}
+                                onMouseDown={(e) => handleHandleMouseDown(e, 'end')}
+                            >
+                                <div className={`w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-indigo-400 drop-shadow-lg transition-all group-hover/handle:border-t-white ${draggingHandle === 'end' ? 'border-t-white scale-125' : ''}`}></div>
+                                <div className={`w-px h-3 bg-indigo-400/50 group-hover/handle:bg-white/50 ${draggingHandle === 'end' ? 'bg-white' : ''}`}></div>
+                                {/* Tooltip */}
+                                <div className="absolute -top-7 px-1.5 py-0.5 rounded bg-zinc-800 border border-white/10 text-[10px] font-mono text-zinc-300 opacity-0 group-hover/handle:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                                    {formatTime(effectiveEnd)}
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                <span className="font-mono text-xs text-zinc-500 min-w-[44px] font-medium">{formatTime(duration)}</span>
+            </div>
+
+            {/* 2. Control Bar (Grid Layout for logical grouping) */}
+            <div className="grid grid-cols-[auto_1fr_auto] gap-4 items-center">
+
+                {/* Left: Transport Controls */}
+                <div className="flex items-center gap-2">
+                    <button onClick={onTogglePlay} className={`${btnGlass} w-10`} title={isPlaying ? "暂停 Space" : "播放 Space"}>
+                        {isPlaying ? <Pause size={18} className="fill-current" /> : <Play size={18} className="fill-current ml-0.5" />}
+                    </button>
+
+                    {/* Seek Step */}
+                    <div className="h-9 px-3 flex items-center gap-2 rounded-xl bg-white/5 border border-white/5 text-xs text-zinc-400 group focus-within:border-white/20 transition-colors">
+                        <FastForward size={14} />
+                        <span className="text-[10px] font-bold">快进</span>
+                        <input
+                            type="number"
+                            className="w-6 bg-transparent text-center font-mono font-bold focus:outline-none text-zinc-200"
+                            value={seekStep}
+                            onChange={(e) => onSeekStepChange(Number(e.target.value))}
+                        />
+                        <span className="text-[10px]">s</span>
+                    </div>
+                </div>
+
+                {/* Center: Modes (Centered in the 1fr space) */}
+                <div className="flex items-center justify-center gap-2">
+                    <button
+                        onClick={toggleRangeMode}
+                        className={`h-9 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border ${isRangeMode ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+                    >
+                        <ScanLine size={16} />
+                        <span>区间</span>
+                    </button>
+
+                    <div className="w-px h-4 bg-white/10"></div>
+
+                    <button
+                        onClick={onTogglePortrait}
+                        className={`h-9 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border ${portraitRatio ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+                    >
+                        <Scissors size={16} />
+                        <span>竖图</span>
                     </button>
                 </div>
 
-                <div className="w-px h-8 bg-white/10 mx-2"></div>
+                {/* Right: Extraction Panel */}
+                <div className="flex items-center gap-2 bg-black/30 p-1 pl-3 rounded-xl border border-white/5">
 
-                {/* Center: Portrait Mode */}
-                <button
-                    onClick={onTogglePortrait}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-medium transition-colors active:scale-95 ${portraitRatio
-                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20'
-                        : 'bg-white/5 hover:bg-white/10 border-white/5 text-zinc-300 hover:text-white'
-                        }`}
-                >
-                    <Scissors size={16} />
-                    <span>{portraitRatio || "竖图"}</span>
-                    <span className="text-zinc-500 ml-1">▼</span>
-                </button>
-
-                <div className="w-px h-8 bg-white/10 mx-2"></div>
-
-                {/* Right: Smart Extract */}
-                <div className="flex items-center gap-3 bg-zinc-800/50 p-1 pr-1.5 rounded-xl border border-white/5">
-                    <div className="flex flex-col px-3 border-r border-white/10">
-                        <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">目标张数</span>
-                        {/* Input for Target Count */}
-                        <input
-                            type="number"
-                            min="1"
-                            max="100"
-                            value={targetCount}
-                            onChange={(e) => onTargetCountChange && onTargetCountChange(parseInt(e.target.value) || 1)}
-                            className="bg-transparent text-white font-mono text-xs font-bold w-10 focus:outline-none focus:text-indigo-400 appearance-none text-center no-scrollbar"
-                        />
+                    {/* Inputs */}
+                    <div className="flex items-center gap-4 border-r border-white/10 pr-3 mr-1">
+                        <div className="flex items-center gap-1.5" title="目标数量">
+                            <Hash size={13} className="text-zinc-500" />
+                            <input
+                                type="number"
+                                value={targetCount}
+                                onChange={(e) => onTargetCountChange(parseInt(e.target.value) || 1)}
+                                className="w-7 bg-transparent text-center font-mono text-sm font-bold text-white focus:outline-none placeholder-zinc-700"
+                            />
+                        </div>
+                        <div className="flex items-center gap-1.5" title="密度倍数">
+                            <X size={13} className="text-zinc-500" />
+                            <input
+                                type="number"
+                                step="0.1"
+                                value={multiplier}
+                                onChange={(e) => onMultiplierChange(parseFloat(e.target.value) || 1)}
+                                className="w-8 bg-transparent text-center font-mono text-sm font-bold text-indigo-400 focus:outline-none"
+                            />
+                        </div>
                     </div>
 
+                    {/* Action Button */}
                     <button
                         onClick={onExtract}
                         disabled={isExtracting}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-lg shadow-indigo-500/20 active:scale-95 ${isExtracting
-                            ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
-                            : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                        className={`h-8 pl-3 pr-4 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${isExtracting
+                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                            : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 active:scale-95'
                             }`}
                     >
-                        {isExtracting ? (
-                            <Loader2 size={16} className="animate-spin" />
-                        ) : (
-                            <Zap size={16} className="fill-current" />
-                        )}
-                        <span>{isExtracting ? "提取中..." : "提取"}</span>
+                        {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} className="fill-current" />}
+                        <div className="flex flex-col items-start leading-tight">
+                            <span>提取</span>
+                            <span className="text-[8px] font-mono opacity-60 normal-case tracking-wide">
+                                {extractDuration.toFixed(1)}s
+                            </span>
+                        </div>
                     </button>
                 </div>
             </div>
