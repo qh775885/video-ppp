@@ -258,7 +258,8 @@ function App() {
         }
 
         // Interval
-        const interval = activeDuration / targetCount;
+        // Distribute frames evenly from Start to End (Inclusive)
+        const interval = (targetCount > 1) ? activeDuration / (targetCount - 1) : 0;
 
         for (let i = 0; i < targetCount; i++) {
             const timeToCapture = effectiveStart + (i * interval);
@@ -439,10 +440,12 @@ function FloatingCockpit({
                 const max = (rangeEnd > 0 ? rangeEnd : duration) - 0.5;
                 const val = Math.max(0, Math.min(t, max));
                 onUpdateStart(val);
+                onSeek(val); // Sync video frame
             } else {
                 const min = rangeStart + 0.5;
                 const val = Math.max(min, Math.min(t, duration));
                 onUpdateEnd(val);
+                onSeek(val); // Sync video frame
             }
         };
 
@@ -496,25 +499,42 @@ function FloatingCockpit({
                 >
                     {/* Track Background */}
                     <div className="absolute top-0 bottom-0 left-0 right-0 bg-white/10 rounded-full overflow-hidden">
-                        {/* Buffered/Range Zone (Blue) */}
-                        <div
-                            className={`absolute top-0 bottom-0 bg-indigo-500/30 transition-opacity duration-300 ${isRangeMode ? 'opacity-100' : 'opacity-0'}`}
-                            style={{ left: `${rStartPct}%`, width: `${rWidthPct}%` }}
-                        ></div>
-                        {/* Progress Fill (White) */}
+                        {/* Progress Fill (White) - Now underneath Range */}
                         <div
                             className="absolute top-0 bottom-0 left-0 bg-white/30"
                             style={{ width: `${progressPct}%` }}
                         ></div>
+
+                        {/* Buffered/Range Zone (Blue) - On Top & Opaque for Consistent Color */}
+                        <div
+                            className={`absolute top-0 bottom-0 bg-indigo-500 transition-opacity duration-300 ${isRangeMode ? 'opacity-100' : 'opacity-0'}`}
+                            style={{ left: `${rStartPct}%`, width: `${rWidthPct}%` }}
+                        ></div>
                     </div>
 
-                    {/* Playhead (The "White Dot") - High Quality */}
+                    {/* Playhead (The "Hanging Pendant") - Refined & Textured */}
                     <div
-                        className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.5)] z-20 pointer-events-none transition-transform duration-150 ease-out group-hover:scale-125 ${isDraggingSeek ? 'scale-125 shadow-[0_0_20px_rgba(255,255,255,0.8)]' : ''}`}
-                        style={{ left: `${progressPct}%` }}
+                        className="absolute top-0 h-full z-40 cursor-grab active:cursor-grabbing transition-none will-change-left"
+                        style={{ left: `${progressPct}%`, transform: 'translateX(-50%)' }}
+                        onMouseDown={(e) => { e.stopPropagation(); handleSeekMouseDown(e); }}
                     >
-                        {/* Inner Dot for detail */}
-                        <div className="absolute inset-[3px] bg-indigo-50 inset rounded-full opacity-0 group-hover:opacity-20 transition-opacity"></div>
+                        {/* 1. Vertical Indicator Line (Glows on drag) */}
+                        <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-[2px] bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.6)] transition-all duration-200 ${isDraggingSeek ? 'h-6 shadow-[0_0_12px_rgba(255,255,255,0.9)] bg-indigo-100' : 'h-5'
+                            }`}></div>
+
+                        {/* 2. The Textured Knob (Hanging Below) */}
+                        <div className={`absolute top-2.5 left-1/2 -translate-x-1/2 flex flex-col items-center justify-center transition-transform duration-200 ${isDraggingSeek ? 'scale-110' : 'group-hover:scale-105'
+                            }`}>
+                            {/* Main Body */}
+                            <div className="w-3.5 h-4 bg-gradient-to-b from-zinc-100 to-zinc-400 rounded-b-md rounded-t-sm shadow-[0_4px_8px_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.8)] border-[0.5px] border-white/60 flex flex-col items-center justify-center gap-[2px]">
+                                {/* Texture Grips */}
+                                <div className="w-2 h-[1px] bg-black/30 shadow-[0_1px_0_rgba(255,255,255,0.2)]"></div>
+                                <div className="w-2 h-[1px] bg-black/30 shadow-[0_1px_0_rgba(255,255,255,0.2)]"></div>
+                            </div>
+
+                            {/* Tiny Triangle Pointer on Top (Optical connection) */}
+                            <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[3px] border-b-zinc-100 absolute -top-[2px]"></div>
+                        </div>
                     </div>
 
                     {/* Range Handles (Only in Range Mode) */}
@@ -622,8 +642,8 @@ function FloatingCockpit({
                             onClick={onExtract}
                             disabled={isExtracting}
                             className={`group relative w-full h-8 rounded-lg font-bold transition-all duration-300 flex items-center justify-center gap-1 overflow-hidden ring-1 ring-inset ${isExtracting
-                                    ? 'bg-zinc-800 text-zinc-500 ring-white/5 cursor-not-allowed'
-                                    : 'bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_10px_rgba(79,70,229,0.3),inset_0_1px_1px_rgba(255,255,255,0.3)] ring-white/10 hover:shadow-[0_4px_15px_rgba(79,70,229,0.4),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:scale-[1.02] active:scale-[0.98]'
+                                ? 'bg-zinc-800 text-zinc-500 ring-white/5 cursor-not-allowed'
+                                : 'bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_10px_rgba(79,70,229,0.3),inset_0_1px_1px_rgba(255,255,255,0.3)] ring-white/10 hover:shadow-[0_4px_15px_rgba(79,70,229,0.4),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:scale-[1.02] active:scale-[0.98]'
                                 }`}
                         >
                             {/* Inner Shine Effect */}
@@ -669,8 +689,8 @@ function FloatingCockpit({
                                             key={num}
                                             onClick={(e) => { e.stopPropagation(); onMultiplierChange(num); }}
                                             className={`h-6 w-full rounded-md flex items-center justify-center text-[10px] font-bold font-mono transition-all ${multiplier === num
-                                                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
-                                                    : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-white'
+                                                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
+                                                : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-white'
                                                 }`}
                                         >
                                             {num}

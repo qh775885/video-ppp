@@ -1,14 +1,14 @@
 {
   "name": "video-extractor",
   "private": true,
-  "version": "2.0.4",
+  "version": "2.0.5",
   "license": "GPL-3.0",
   "main": "electron-main.js",
   "scripts": {
     "dev": "vite build && electron .",
     "web": "vite",
     "preview": "vite preview",
-    "build": "vite build && electron-builder --win --dir"
+    "build": "vite build && electron-builder --win"
   },
   "build": {
     "appId": "com.yourname.videoextractor",
@@ -22,7 +22,10 @@
       "output": "release/${version}"
     },
     "win": {
-      "target": "nsis"
+      "target": [
+        "nsis",
+        "dir"
+      ]
     },
     "nsis": {
       "oneClick": false,
