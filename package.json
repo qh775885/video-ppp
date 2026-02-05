@@ -13,15 +13,18 @@
   "build": {
     "appId": "com.yourname.videoextractor",
     "productName": "视频截图神器",
+    "icon": "public/icon.png",
     "files": [
       "dist/**/*",
       "electron-main.js",
-      "package.json"
+      "package.json",
+      "public/icon.png"
     ],
     "directories": {
       "output": "release/${version}"
     },
     "win": {
+      "icon": "public/icon.png",
       "target": [
         "nsis",
         "dir"
