@@ -236,7 +236,7 @@ function App() {
                     }
                 }
 
-                setFrames(prev => [newFrame, ...prev]);
+                setFrames(prev => [...prev, newFrame]);
                 resolve();
             }, 'image/jpeg', 0.95);
         });
