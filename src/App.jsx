@@ -840,7 +840,7 @@ function FloatingCockpit({
                                 onClick={onToggleAutoTrack}
                                 disabled={!aiModelReady && !isAiLoading}
                                 title={isAiLoading ? "模型加载中..." : (aiModelReady ? "AI 智能跟踪人物" : "")}
-                                className={`h-8 px-3 ml-0.5 rounded-lg flex items-center gap-1.5 text-[10px] font-bold transition-all ${autoTrack ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]'
+                                className={`h-8 px-2 ml-0.5 rounded-lg flex items-center justify-center gap-1 text-xs font-bold whitespace-nowrap shrink-0 transition-all ${autoTrack ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]'
                                     : 'bg-white/5 text-indigo-300/60 hover:text-indigo-200 hover:bg-white/10'
                                     }`}
                             >
@@ -849,8 +849,8 @@ function FloatingCockpit({
                                 ) : (
                                     <BrainCircuit size={14} className={!aiModelReady ? "opacity-50" : ""} />
                                 )}
-                                <span className={`leading-none ${!aiModelReady ? "opacity-50" : ""}`}>
-                                    {autoTrack ? '智能跟踪 ON' : '智能跟踪 OFF'}
+                                <span className={!aiModelReady ? "opacity-50" : ""}>
+                                    {autoTrack ? 'AI 追踪' : 'AI 锁定'}
                                 </span>
                             </button>
                         )}
