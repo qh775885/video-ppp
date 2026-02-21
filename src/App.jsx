@@ -781,12 +781,12 @@ function FloatingCockpit({
                 <span className="font-mono text-xs text-zinc-500 min-w-[44px] font-medium">{formatTime(duration)}</span>
             </div>
 
-            {/* 2. Control Bar (Grid Layout for logical grouping) */}
-            <div className="grid grid-cols-[auto_1fr_auto] gap-4 items-center">
+            {/* 2. Control Bar (Flex Layout to prevent crowding) */}
+            <div className="flex items-center justify-between gap-4">
 
                 {/* Left: Transport Controls */}
-                <div className="flex items-center gap-2">
-                    <button onClick={onTogglePlay} className={`${btnGlass} w-10`} title={isPlaying ? "暂停 Space" : "播放 Space"}>
+                <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={onTogglePlay} className={`${btnGlass} w-10 shrink-0`} title={isPlaying ? "暂停 Space" : "播放 Space"}>
                         {isPlaying ? <Pause size={18} className="fill-current" /> : <Play size={18} className="fill-current ml-0.5" />}
                     </button>
 
@@ -804,8 +804,8 @@ function FloatingCockpit({
                     </div>
                 </div>
 
-                {/* Center: Modes (Centered in the 1fr space) */}
-                <div className="flex items-center justify-center gap-2">
+                {/* Center: Modes */}
+                <div className="flex items-center justify-center gap-2 overflow-x-auto no-scrollbar mask-edges shrink-0">
                     <button
                         onClick={toggleRangeMode}
                         className={`h-9 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border whitespace-nowrap shrink-0 ${isRangeMode ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
@@ -857,7 +857,7 @@ function FloatingCockpit({
                     </div>
                 </div>
 
-                {/* Right: Extraction Panel - Compact 1:2:1 */}
+                {/* Right: Extraction Panel */}
                 <div className="flex items-center h-[48px] px-1 rounded-xl bg-[#0a0a0b]/80 border border-white/10 shadow-2xl backdrop-blur-xl ring-1 ring-white/5 mx-0">
 
                     {/* 1. Left: Count (Ratio: ~1) */}
