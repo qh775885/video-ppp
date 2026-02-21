@@ -386,9 +386,37 @@ function App() {
     };
 
     // Keyboard Shortcuts
+    const lastSeekTime = useRef(0);
+    const targetSeekTime = useRef(null);
+    const seekDebounceRef = useRef(null);
+
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.target.tagName === 'INPUT') return;
+
+            const now = performance.now();
+            const processSeek = (direction) => {
+                let base = targetSeekTime.current !== null ? targetSeekTime.current : (videoRefVal ? videoRefVal.currentTime : currentTime);
+                let newTime = base + direction * seekStep * (1 / fps);
+                newTime = Math.max(0, Math.min(duration, newTime));
+                targetSeekTime.current = newTime;
+
+                // Restrict physical decoder seek commands to ~8 times per second max (120ms)
+                // This prevents the browser decoder from crashing/blacking out when holding the key
+                if (now - lastSeekTime.current > 120) {
+                    lastSeekTime.current = now;
+                    handleSeek(targetSeekTime.current);
+                    targetSeekTime.current = null;
+                } else {
+                    clearTimeout(seekDebounceRef.current);
+                    seekDebounceRef.current = setTimeout(() => {
+                        if (targetSeekTime.current !== null) {
+                            handleSeek(targetSeekTime.current);
+                            targetSeekTime.current = null;
+                        }
+                    }, 120);
+                }
+            };
 
             switch (e.code) {
                 case 'Space':
@@ -401,11 +429,11 @@ function App() {
                     break;
                 case 'ArrowLeft':
                     e.preventDefault();
-                    handleSeek(Math.max(0, currentTime - seekStep * (1 / fps)));
+                    processSeek(-1);
                     break;
                 case 'ArrowRight':
                     e.preventDefault();
-                    handleSeek(Math.min(duration, currentTime + seekStep * (1 / fps)));
+                    processSeek(1);
                     break;
                 // Add shortcuts for In/Out points? Maybe I and O?
                 case 'KeyI': handleSetStart(); break;
@@ -415,7 +443,7 @@ function App() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [videoRefVal, isPlaying, currentTime, duration, seekStep, captureFrame, rangeStart, rangeEnd]);
+    }, [videoRefVal, isPlaying, currentTime, duration, seekStep, captureFrame, rangeStart, rangeEnd, fps]);
 
     return (
         <div className="flex h-screen w-screen bg-black overflow-hidden font-sans text-sm select-none">
@@ -752,7 +780,7 @@ function FloatingCockpit({
                                 disabled={!aiModelReady && !isAiLoading}
                                 title={isAiLoading ? "模型加载中..." : (aiModelReady ? "AI 智能跟踪人物" : "")}
                                 className={`h-8 px-3 ml-0.5 rounded-lg flex items-center gap-1.5 text-[10px] font-bold transition-all ${autoTrack ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]'
-                                        : 'bg-white/5 text-indigo-300/60 hover:text-indigo-200 hover:bg-white/10'
+                                    : 'bg-white/5 text-indigo-300/60 hover:text-indigo-200 hover:bg-white/10'
                                     }`}
                             >
                                 {isAiLoading ? (
