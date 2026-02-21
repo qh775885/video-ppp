@@ -808,7 +808,7 @@ function FloatingCockpit({
                 <div className="flex items-center justify-center gap-2">
                     <button
                         onClick={toggleRangeMode}
-                        className={`h-9 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border ${isRangeMode ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+                        className={`h-9 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border whitespace-nowrap shrink-0 ${isRangeMode ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
                     >
                         <ScanLine size={16} />
                         <span>区间</span>
