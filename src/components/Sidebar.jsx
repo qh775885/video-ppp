@@ -137,8 +137,14 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
             {/* Lightbox Modal (Full Screen with Nav) - Usage of Portal to break out of Sidebar container */}
             {previewIndex !== -1 && currentFrame && createPortal(
                 <div
-                    className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center animate-in fade-in duration-200 select-none"
-                    onClick={() => setPreviewIndex(-1)}
+                    autoFocus
+                    tabIndex={0}
+                    className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center animate-in fade-in duration-200 select-none outline-none"
+                    onClick={() => {
+                        setPreviewIndex(-1);
+                        // Force window body to regain active focus after portal unmount in Electron
+                        setTimeout(() => document.body.focus(), 10);
+                    }}
                 >
                     {/* Main Image */}
                     <div className="relative w-full h-full flex items-center justify-center p-8" onClick={e => e.stopPropagation()}>

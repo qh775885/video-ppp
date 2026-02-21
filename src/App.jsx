@@ -263,13 +263,14 @@ function App() {
 
 
     // --- Capture Logic (Smart Crop with Offset) ---
-    // Ensure captureFrame returns a Promise
-    const captureFrame = async () => {
+    const captureFrame = async (overrideOffset = null) => {
         if (!videoRefVal || !videoRefVal.videoWidth) return;
 
         const vWidth = videoRefVal.videoWidth;
         const vHeight = videoRefVal.videoHeight;
         let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
+
+        const actualCropOffset = overrideOffset !== null ? overrideOffset : cropOffset;
 
         // Smart Crop Logic
         if (portraitRatio === "9:16") {
@@ -278,7 +279,7 @@ function App() {
             if (targetWidth <= vWidth) {
                 sWidth = targetWidth;
                 const maxOffset = (vWidth - sWidth) / 2;
-                const currentOffsetPx = cropOffset * maxOffset;
+                const currentOffsetPx = actualCropOffset * maxOffset;
                 sx = (vWidth - sWidth) / 2 + currentOffsetPx;
             } else {
                 sHeight = vWidth / targetAspect;
@@ -378,8 +379,33 @@ function App() {
 
             videoRefVal.currentTime = timeToCapture;
             setCurrentTime(timeToCapture);
+
+            // Wait for video frame to decode...
             await new Promise(r => setTimeout(r, 450));
-            await captureFrame();
+
+            // Force AI detection inline before capture if AutoTrack is on
+            if (autoTrack && aiModel && portraitRatio) {
+                try {
+                    const predictions = await aiModel.detect(videoRefVal);
+                    const person = predictions.find(p => p.class === 'person');
+                    if (person) {
+                        const [x, y, w, h] = person.bbox;
+                        const cx = x + w / 2;
+                        const vWidth = videoRefVal.videoWidth || 1920;
+                        const normOffset = (cx / vWidth - 0.5) * 2;
+
+                        // We cannot rely solely on setCropOffset state here because captureFrame 
+                        // reads from current render cycle state. We must pass it explicitly to captureFrame.
+                        await captureFrame(Math.max(-1, Math.min(1, normOffset)));
+                        continue;
+                    }
+                } catch (err) {
+                    console.error("Batch AI detect failed:", err);
+                }
+            }
+
+            // Fallback: normal capture if AI tracking is off or failed
+            await captureFrame(cropOffset);
         }
 
         setIsExtracting(false);
