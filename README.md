@@ -7,6 +7,7 @@
 百度：https://pan.baidu.com/s/1X3PaoPJGoRZThQnqUood5g?pwd=kp49 (提取码: kp49)
 夸克：https://pan.quark.cn/s/18449e6d0144 (提取码: VgzQ)
 ```
+<img width="1150" height="866" alt="QQ20260221-191718" src="https://github.com/user-attachments/assets/7f42c901-5630-4999-9598-299a2af6af62" />
 
 ## v2.0.6 新版特性 
 - **无限制格式支持**：不仅支持 MP4，还能秒开 TS 和 MKV，告别格式转换带来的烦恼。
