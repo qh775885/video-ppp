@@ -56,10 +56,9 @@ function App() {
     const [isAiLoading, setIsAiLoading] = useState(false);
     const isDetectingRef = useRef(false);
 
-    // AI Model is extremely heavy (TFJS execution blocks thread).
-    // Let's Lazy Load it ONLY when portrait mode is engaged so drag logic works instantly.
+    // Preload AI Model on mount to ensure zero-wait when features are actually toggled
     useEffect(() => {
-        if (portraitRatio && !aiModel && !isAiLoading) {
+        if (!aiModel && !isAiLoading) {
             setIsAiLoading(true);
             setTimeout(() => {
                 import('@tensorflow/tfjs').then(() => {
@@ -70,9 +69,9 @@ function App() {
                         });
                     });
                 });
-            }, 100);
+            }, 1000); // 1s delayed start so it doesn't block window paint/file-drop zero-delay
         }
-    }, [portraitRatio, aiModel, isAiLoading]);
+    }, [aiModel, isAiLoading]);
 
     // Sync end range when duration loads
     useEffect(() => {
@@ -151,14 +150,13 @@ function App() {
     };
 
 
-    // Toggle Portrait Mode (Reset offset when toggling)
-    const togglePortrait = () => {
-        setPortraitRatio(prev => {
-            if (!prev) return "9:16";
-            if (prev === "9:16") return "3:4";
-            if (prev === "3:4") return "4:5";
-            return null; // back to landscape
-        });
+    // Direct Setter for Portrait Mode
+    const setPortraitMode = (mode) => {
+        if (portraitRatio === mode) {
+            setPortraitRatio(null); // click active again turns it off
+        } else {
+            setPortraitRatio(mode);
+        }
         setCropOffset(0);
     };
 
@@ -553,7 +551,7 @@ function App() {
                             onResetRange={handleResetRange}
 
                             portraitRatio={portraitRatio}
-                            onTogglePortrait={togglePortrait}
+                            onSetPortraitMode={setPortraitMode}
 
                             autoTrack={autoTrack}
                             onToggleAutoTrack={() => setAutoTrack(!autoTrack)}
@@ -591,7 +589,7 @@ function FloatingCockpit({
     isPlaying, onTogglePlay,
     currentTime, duration, onSeek,
     rangeStart, rangeEnd, onUpdateStart, onUpdateEnd, onResetRange,
-    portraitRatio, onTogglePortrait,
+    portraitRatio, onSetPortraitMode,
     autoTrack, onToggleAutoTrack, aiModelReady, isAiLoading,
     targetCount, onTargetCountChange,
     multiplier, onMultiplierChange,
@@ -819,13 +817,22 @@ function FloatingCockpit({
                     <div className="w-px h-4 bg-white/10 mx-1"></div>
 
                     <div className="flex bg-black/40 rounded-xl border border-white/5 p-0.5 overflow-hidden">
-                        <button
-                            onClick={onTogglePortrait}
-                            className={`h-8 px-4 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${portraitRatio ? 'bg-purple-500/30 text-purple-300 shadow-md' : 'bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
-                        >
-                            <Scissors size={14} />
-                            <span>{portraitRatio ? `竖图 ${portraitRatio}` : '裁切模式'}</span>
-                        </button>
+                        {/* Quick Switch Toggles for Crop Ratios */}
+                        <div className="flex items-center gap-0.5">
+                            {['9:16', '3:4', '4:5'].map(ratio => (
+                                <button
+                                    key={ratio}
+                                    onClick={() => onSetPortraitMode(ratio)}
+                                    className={`h-8 px-2.5 rounded-lg flex items-center justify-center text-xs font-bold font-mono transition-all ${portraitRatio === ratio
+                                            ? 'bg-purple-500/30 text-purple-300 shadow-md ring-1 ring-purple-500/50'
+                                            : 'bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
+                                        }`}
+                                >
+                                    {portraitRatio === ratio && <Scissors size={12} className="mr-1" />}
+                                    {ratio}
+                                </button>
+                            ))}
+                        </div>
 
                         {/* Auto Track sub-button */}
                         {portraitRatio && (
