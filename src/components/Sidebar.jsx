@@ -72,14 +72,7 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                         </span>
                         {frames.length > 0 && (
                             <button
-                                onClick={() => {
-                                    if (window.confirm('确定清空所有截图吗？')) {
-                                        onClear();
-                                    }
-                                    // Native confirm dialogs in Electron steal window focus.
-                                    // Force focus back to the DOM so inputs remain interactive.
-                                    setTimeout(() => document.body.focus(), 50);
-                                }}
+                                onClick={() => onClear()}
                                 className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-red-400 transition-colors px-2 py-1 rounded hover:bg-red-500/10"
                             >
                                 <Trash2 size={12} />
