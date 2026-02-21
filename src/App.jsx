@@ -182,7 +182,16 @@ function App() {
                     const [x, y, w, h] = person.bbox;
                     const cx = x + w / 2;
                     const vWidth = videoRefVal.videoWidth || 1920;
-                    const normOffset = (cx / vWidth - 0.5) * 2;
+                    const vHeight = videoRefVal.videoHeight || 1080;
+
+                    const targetWidth = vHeight * (9 / 16);
+                    const maxOffset = (vWidth - targetWidth) / 2;
+
+                    let normOffset = 0;
+                    if (maxOffset > 0) {
+                        normOffset = (cx - vWidth / 2) / maxOffset;
+                    }
+
                     setCropOffset(Math.max(-1, Math.min(1, normOffset)));
                 }
             } catch (err) {
@@ -392,7 +401,15 @@ function App() {
                         const [x, y, w, h] = person.bbox;
                         const cx = x + w / 2;
                         const vWidth = videoRefVal.videoWidth || 1920;
-                        const normOffset = (cx / vWidth - 0.5) * 2;
+                        const vHeight = videoRefVal.videoHeight || 1080;
+
+                        const targetWidth = vHeight * (9 / 16);
+                        const maxOffset = (vWidth - targetWidth) / 2;
+
+                        let normOffset = 0;
+                        if (maxOffset > 0) {
+                            normOffset = (cx - vWidth / 2) / maxOffset;
+                        }
 
                         // We cannot rely solely on setCropOffset state here because captureFrame 
                         // reads from current render cycle state. We must pass it explicitly to captureFrame.
