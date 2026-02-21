@@ -20,19 +20,7 @@ function App() {
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
 
-    // Global drag prevent to fix the "forbidden cursor" bug in Electron
-    useEffect(() => {
-        const preventDefault = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-        };
-        window.addEventListener('dragover', preventDefault);
-        window.addEventListener('drop', preventDefault);
-        return () => {
-            window.removeEventListener('dragover', preventDefault);
-            window.removeEventListener('drop', preventDefault);
-        };
-    }, []);
+    // Global drag prevention is now fully handled in index.html to guarantee 0-ms startup
 
     // --- Tool State ---
     const [frames, setFrames] = useState([]);
