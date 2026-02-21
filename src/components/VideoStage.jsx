@@ -96,11 +96,11 @@ export function VideoStage({
             updateMaskDimensions();
         });
 
+        // Attach observer to container
         observer.observe(containerRef.current);
 
-        // Initial calc
-        // We might need a small delay if the video just loaded, 
-        // but onLoadedMetadata handles the first calc.
+        // Immediate force update on mount or ratio change
+        updateMaskDimensions();
 
         return () => observer.disconnect();
     }, [videoFile, portraitRatio]); // Re-attach if critical dependencies change
@@ -230,7 +230,7 @@ export function VideoStage({
                     />
 
                     {/* Portrait Overlay */}
-                    {portraitRatio === "9:16" && (
+                    {portraitRatio && (
                         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
                             <div
                                 style={{
@@ -251,7 +251,7 @@ export function VideoStage({
                                 </div>
                                 {/* Label */}
                                 <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-indigo-400 text-[10px] font-bold bg-black/80 px-2 py-0.5 rounded tracking-wider border border-white/10 select-none">
-                                    9:16 竖图模式
+                                    {portraitRatio} 竖图模式
                                 </div>
                             </div>
                         </div>

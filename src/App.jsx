@@ -824,8 +824,8 @@ function FloatingCockpit({
                                     key={ratio}
                                     onClick={() => onSetPortraitMode(ratio)}
                                     className={`h-8 px-2.5 rounded-lg flex items-center justify-center text-xs font-bold font-mono transition-all ${portraitRatio === ratio
-                                            ? 'bg-purple-500/30 text-purple-300 shadow-md ring-1 ring-purple-500/50'
-                                            : 'bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
+                                        ? 'bg-purple-500/30 text-purple-300 shadow-md ring-1 ring-purple-500/50'
+                                        : 'bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
                                         }`}
                                 >
                                     {portraitRatio === ratio && <Scissors size={12} className="mr-1" />}
@@ -849,7 +849,9 @@ function FloatingCockpit({
                                 ) : (
                                     <BrainCircuit size={14} className={!aiModelReady ? "opacity-50" : ""} />
                                 )}
-                                {isAiLoading ? "载入视觉核心" : (autoTrack ? "智能跟踪 ON" : "智能跟踪")}
+                                <span className={`leading-none ${!aiModelReady ? "opacity-50" : ""}`}>
+                                    {autoTrack ? '智能跟踪 ON' : '智能跟踪 OFF'}
+                                </span>
                             </button>
                         )}
                     </div>
