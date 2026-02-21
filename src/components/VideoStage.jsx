@@ -29,9 +29,20 @@ export function VideoStage({
     // 处理文件变化
     useEffect(() => {
         if (videoFile) {
-            const url = URL.createObjectURL(videoFile);
+            let url;
+            if (videoFile.loadedPath && videoFile.loadedPath !== videoFile.path) {
+                // Was converted to mp4! Load it directly from local filesystem temp path
+                const safePath = videoFile.loadedPath.replace(/\\/g, '/');
+                url = `file:///${safePath}`;
+            } else {
+                url = URL.createObjectURL(videoFile);
+            }
             setObjectUrl(url);
-            return () => URL.revokeObjectURL(url);
+            return () => {
+                if (url && url.startsWith('blob:')) {
+                    URL.revokeObjectURL(url);
+                }
+            };
         }
     }, [videoFile]);
 
@@ -148,7 +159,8 @@ export function VideoStage({
         setDragActive(false);
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             const file = e.dataTransfer.files[0];
-            if (file.type.startsWith('video/')) {
+            const name = file.name.toLowerCase();
+            if (file.type.startsWith('video/') || name.endsWith('.ts') || name.endsWith('.mkv')) {
                 onFileLoaded(file);
             }
         }

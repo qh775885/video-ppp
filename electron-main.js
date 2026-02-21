@@ -1,5 +1,17 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+const ffprobePath = require('ffprobe-static');
+const os = require('os');
+const fs = require('fs');
+
+// Handling dev vs packed paths for ffmpeg/ffprobe
+const fixPath = (p) => p ? p.replace('app.asar', 'app.asar.unpacked') : '';
+ffmpeg.setFfmpegPath(fixPath(ffmpegPath));
+if (ffprobePath && ffprobePath.path) {
+    ffmpeg.setFfprobePath(fixPath(ffprobePath.path));
+}
 
 function createWindow() {
     const win = new BrowserWindow({
@@ -49,6 +61,57 @@ ipcMain.handle('open-folder', async (event, folderPath) => {
     if (folderPath) {
         await shell.openPath(folderPath);
     }
+});
+
+ipcMain.handle('get-video-info', (event, filePath) => {
+    return new Promise((resolve, reject) => {
+        if (!filePath) return reject(new Error("No input specified"));
+        ffmpeg.ffprobe(filePath, (err, metadata) => {
+            if (err) return reject(err);
+            const stream = metadata.streams.find(s => s.codec_type === 'video');
+            let fps = 30; // default
+            if (stream && stream.r_frame_rate) {
+                const parts = stream.r_frame_rate.split('/');
+                if (parts.length === 2 && parts[1] !== '0') {
+                    fps = parseInt(parts[0]) / parseInt(parts[1]);
+                } else if (parts.length === 1) {
+                    fps = parseFloat(parts[0]);
+                }
+            }
+            resolve({
+                duration: metadata.format.duration,
+                fps,
+                width: stream ? stream.width : 0,
+                height: stream ? stream.height : 0
+            });
+        });
+    });
+});
+
+ipcMain.handle('convert-ts', (event, filePath) => {
+    return new Promise((resolve, reject) => {
+        if (!filePath) {
+            console.error("Empty filePath received in convert-ts");
+            return reject(new Error("No path specified for conversion"));
+        }
+        const tempPath = path.join(os.tmpdir(), `video_ppp_converted_${Date.now()}.mp4`);
+        ffmpeg(filePath)
+            // Use stream copy (Remuxing) instead of full re-encoding! This takes 1 second instead of minutes!
+            .outputOptions([
+                '-c copy',             // Copy video and audio perfectly without wasting CPU on encoding
+                '-map 0:v:0',          // ONLY grab the MAIN video track (drops broken sub-tracks that caused errors)
+                '-map 0:a:0?',         // ONLY grab the 1st audio track, ignore errors if no audio
+                '-ignore_unknown',     // Drops weird TS data streams (subtitles, text overlays) that break MP4 muxer
+                '-f mp4',
+                '-y'
+            ])
+            .on('end', () => resolve(tempPath))
+            .on('error', (err, stdout, stderr) => {
+                console.error("FFMPEG REMUX ERROR:", stderr);
+                reject(new Error(`${err.message} | STDERR: ${stderr}`));
+            })
+            .save(tempPath);
+    });
 });
 
 app.whenReady().then(() => {

@@ -5,6 +5,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>视频截图神器 v2.0</title>
+    <!-- 强行在一瞬间接管系统的原生拖拽拦截，彻底消除React冷加载三秒空窗期的无法拖入bug -->
+    <script>
+        document.addEventListener('dragover', (e) => e.preventDefault(), false);
+        document.addEventListener('drop', (e) => e.preventDefault(), false);
+    </script>
 </head>
 
 <body class="bg-background text-foreground overflow-hidden">

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, FastForward, Image as ImageIcon, Zap, Scissors, Settings, FolderOpen, Loader2, ScanLine, Hash, X } from 'lucide-react';
+import { Play, Pause, FastForward, Image as ImageIcon, Zap, Scissors, Settings, FolderOpen, Loader2, ScanLine, Hash, X, BrainCircuit } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { VideoStage } from './components/VideoStage';
 
@@ -20,6 +20,20 @@ function App() {
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
 
+    // Global drag prevent to fix the "forbidden cursor" bug in Electron
+    useEffect(() => {
+        const preventDefault = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        window.addEventListener('dragover', preventDefault);
+        window.addEventListener('drop', preventDefault);
+        return () => {
+            window.removeEventListener('dragover', preventDefault);
+            window.removeEventListener('drop', preventDefault);
+        };
+    }, []);
+
     // --- Tool State ---
     const [frames, setFrames] = useState([]);
     const [seekStep, setSeekStep] = useState(5);
@@ -33,6 +47,32 @@ function App() {
     const [multiplier, setMultiplier] = useState(1); // Density: frames per second
     const [targetCount, setTargetCount] = useState(12);
     const [isExtracting, setIsExtracting] = useState(false);
+
+    // --- New AI / Advanced State ---
+    const [isVideoLoading, setIsVideoLoading] = useState(false);
+    const [fps, setFps] = useState(30);
+    const [autoTrack, setAutoTrack] = useState(false);
+    const [aiModel, setAiModel] = useState(null);
+    const [isAiLoading, setIsAiLoading] = useState(false);
+    const isDetectingRef = useRef(false);
+
+    // AI Model is extremely heavy (TFJS execution blocks thread).
+    // Let's Lazy Load it ONLY when portrait mode is engaged so drag logic works instantly.
+    useEffect(() => {
+        if (portraitRatio === "9:16" && !aiModel && !isAiLoading) {
+            setIsAiLoading(true);
+            setTimeout(() => {
+                import('@tensorflow/tfjs').then(() => {
+                    import('@tensorflow-models/coco-ssd').then(cocoSsd => {
+                        cocoSsd.load({ base: 'lite_mobilenet_v2' }).then(model => {
+                            setAiModel(model);
+                            setIsAiLoading(false);
+                        });
+                    });
+                });
+            }, 100);
+        }
+    }, [portraitRatio, aiModel, isAiLoading]);
 
     // Sync end range when duration loads
     useEffect(() => {
@@ -128,8 +168,28 @@ function App() {
         setIsPlaying(!isPlaying);
     };
 
-    const onTimeUpdate = (e) => {
-        setCurrentTime(e.target.currentTime);
+    const onTimeUpdate = async (e) => {
+        const time = e.target.currentTime;
+        setCurrentTime(time);
+
+        // AI Person Tracking
+        if (autoTrack && aiModel && portraitRatio && videoRefVal && !isDetectingRef.current) {
+            isDetectingRef.current = true;
+            try {
+                const predictions = await aiModel.detect(videoRefVal);
+                const person = predictions.find(p => p.class === 'person');
+                if (person) {
+                    const [x, y, w, h] = person.bbox;
+                    const cx = x + w / 2;
+                    const vWidth = videoRefVal.videoWidth || 1920;
+                    const normOffset = (cx / vWidth - 0.5) * 2;
+                    setCropOffset(Math.max(-1, Math.min(1, normOffset)));
+                }
+            } catch (err) {
+                console.error("AI tracking err:", err);
+            }
+            setTimeout(() => { isDetectingRef.current = false; }, 100); // 10fps limit for AI to save CPU
+        }
     };
 
     const [isVerticalContent, setIsVerticalContent] = useState(false); // Detect if loaded video is vertical
@@ -147,6 +207,57 @@ function App() {
         if (videoRefVal) {
             videoRefVal.currentTime = time;
             setCurrentTime(time);
+        }
+    };
+
+    const handleFileLoaded = async (file) => {
+        setIsVideoLoading(true);
+        const { ipcRenderer, webUtils } = window.require('electron');
+        try {
+            // Electron 30+ 隐藏了 file.path，需要用 webUtils 提权获取真实路径
+            let loadedPath = file.path;
+
+            // Try fallback reading from file object exactly
+            if (!loadedPath && file.webkitRelativePath && file.webkitRelativePath.includes(':')) {
+                loadedPath = file.webkitRelativePath;
+            }
+
+            if (!loadedPath && webUtils) {
+                try {
+                    loadedPath = webUtils.getPathForFile(file);
+                } catch (err) {
+                    console.error("webUtils error:", err);
+                }
+            }
+
+            if (!loadedPath) {
+                alert(`未能提取真实路径！
+请检查：
+1. 请勿直接从网页、压缩包或者非原生文件管理工具内直接拖出。
+2. Windows 下请从「资源管理器(例如 D盘)」内直接拖动文件。
+调试信息: File[${file.name}], type[${file.type}], Utils[${!!webUtils}]`);
+                setIsVideoLoading(false);
+                return;
+            }
+
+            // 1. Check if TS, trigger conversion
+            if (file.name.toLowerCase().endsWith('.ts') || file.name.toLowerCase().endsWith('.mkv')) {
+                loadedPath = await ipcRenderer.invoke('convert-ts', loadedPath);
+            }
+
+            // 2. Extract accurate FPS via ffprobe
+            const info = await ipcRenderer.invoke('get-video-info', loadedPath);
+            setFps(info.fps > 0 ? info.fps : 30);
+
+            // 3. Keep original name, but substitute the path
+            file.loadedPath = loadedPath;
+            setVideoFile(file);
+        } catch (e) {
+            console.error("Video parse err:", e);
+            alert("底层解析失败：" + e.message);
+            setVideoFile(file); // Fallback to raw file if err
+        } finally {
+            setIsVideoLoading(false);
         }
     };
 
@@ -290,11 +401,11 @@ function App() {
                     break;
                 case 'ArrowLeft':
                     e.preventDefault();
-                    handleSeek(Math.max(0, currentTime - seekStep));
+                    handleSeek(Math.max(0, currentTime - seekStep * (1 / fps)));
                     break;
                 case 'ArrowRight':
                     e.preventDefault();
-                    handleSeek(Math.min(duration, currentTime + seekStep));
+                    handleSeek(Math.min(duration, currentTime + seekStep * (1 / fps)));
                     break;
                 // Add shortcuts for In/Out points? Maybe I and O?
                 case 'KeyI': handleSetStart(); break;
@@ -309,11 +420,21 @@ function App() {
     return (
         <div className="flex h-screen w-screen bg-black overflow-hidden font-sans text-sm select-none">
 
+            {isVideoLoading && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-4 text-white">
+                        <Loader2 className="animate-spin text-indigo-500" size={48} />
+                        <div className="font-bold tracking-widest text-lg">正在底层解码与转封装 (TS)...</div>
+                        <div className="text-zinc-400 text-sm">彻底解决格式与逐帧定位</div>
+                    </div>
+                </div>
+            )}
+
             {/* Zone A: The Stage */}
             <div className={`relative flex-1 flex flex-col items-center justify-center bg-black group w-full h-full transition-[padding] duration-300 ${isVerticalContent ? 'pb-40' : ''}`}>
                 <VideoStage
                     videoFile={videoFile}
-                    onFileLoaded={setVideoFile}
+                    onFileLoaded={handleFileLoaded}
                     setVideoRef={setVideoRefVal}
                     onTimeUpdate={onTimeUpdate}
                     onDurationChange={onDurationChange}
@@ -352,6 +473,11 @@ function App() {
                             portraitRatio={portraitRatio}
                             onTogglePortrait={togglePortrait}
 
+                            autoTrack={autoTrack}
+                            onToggleAutoTrack={() => setAutoTrack(!autoTrack)}
+                            aiModelReady={!!aiModel}
+                            isAiLoading={isAiLoading}
+
                             // Extract Props
                             targetCount={targetCount}
                             onTargetCountChange={handleTargetCountChange}
@@ -384,6 +510,7 @@ function FloatingCockpit({
     currentTime, duration, onSeek,
     rangeStart, rangeEnd, onUpdateStart, onUpdateEnd, onResetRange,
     portraitRatio, onTogglePortrait,
+    autoTrack, onToggleAutoTrack, aiModelReady, isAiLoading,
     targetCount, onTargetCountChange,
     multiplier, onMultiplierChange,
     isExtracting, onExtract
@@ -586,14 +713,14 @@ function FloatingCockpit({
                     {/* Seek Step */}
                     <div className="h-9 px-3 flex items-center gap-2 rounded-xl bg-white/5 border border-white/5 text-xs text-zinc-400 group focus-within:border-white/20 transition-colors">
                         <FastForward size={14} />
-                        <span className="text-[10px] font-bold">快进</span>
+                        <span className="text-[10px] font-bold">步进</span>
                         <input
                             type="number"
-                            className="w-6 bg-transparent text-center font-mono font-bold focus:outline-none text-zinc-200"
+                            className="w-8 bg-transparent text-center font-mono font-bold focus:outline-none text-zinc-200"
                             value={seekStep}
                             onChange={(e) => onSeekStepChange(Number(e.target.value))}
                         />
-                        <span className="text-[10px]">s</span>
+                        <span className="text-[10px]">帧</span>
                     </div>
                 </div>
 
@@ -607,15 +734,36 @@ function FloatingCockpit({
                         <span>区间</span>
                     </button>
 
-                    <div className="w-px h-4 bg-white/10"></div>
+                    <div className="w-px h-4 bg-white/10 mx-1"></div>
 
-                    <button
-                        onClick={onTogglePortrait}
-                        className={`h-9 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border ${portraitRatio ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
-                    >
-                        <Scissors size={16} />
-                        <span>竖图</span>
-                    </button>
+                    <div className="flex bg-black/40 rounded-xl border border-white/5 p-0.5 overflow-hidden">
+                        <button
+                            onClick={onTogglePortrait}
+                            className={`h-8 px-4 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${portraitRatio ? 'bg-purple-500/30 text-purple-300 shadow-md' : 'bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+                        >
+                            <Scissors size={14} />
+                            <span>竖图</span>
+                        </button>
+
+                        {/* Auto Track sub-button */}
+                        {portraitRatio && (
+                            <button
+                                onClick={onToggleAutoTrack}
+                                disabled={!aiModelReady && !isAiLoading}
+                                title={isAiLoading ? "模型加载中..." : (aiModelReady ? "AI 智能跟踪人物" : "")}
+                                className={`h-8 px-3 ml-0.5 rounded-lg flex items-center gap-1.5 text-[10px] font-bold transition-all ${autoTrack ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]'
+                                        : 'bg-white/5 text-indigo-300/60 hover:text-indigo-200 hover:bg-white/10'
+                                    }`}
+                            >
+                                {isAiLoading ? (
+                                    <Loader2 size={12} className="animate-spin opacity-50" />
+                                ) : (
+                                    <BrainCircuit size={14} className={!aiModelReady ? "opacity-50" : ""} />
+                                )}
+                                {isAiLoading ? "载入视觉核心" : (autoTrack ? "智能跟踪 ON" : "智能跟踪")}
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Right: Extraction Panel - Compact 1:2:1 */}

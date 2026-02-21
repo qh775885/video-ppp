@@ -1,7 +1,7 @@
 {
   "name": "video-extractor",
   "private": true,
-  "version": "2.0.5",
+  "version": "2.0.6",
   "license": "GPL-3.0",
   "main": "electron-main.js",
   "scripts": {
@@ -58,6 +58,11 @@
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "fluent-ffmpeg": "^2.1.3"
   }
 }
