@@ -5,7 +5,6 @@
 网盘下载地址
 迅雷：https://pan.xunlei.com/s/VOiGf_rK0uVZCW5AfyBHI4_OA1?pwd=bcad
 百度：https://pan.baidu.com/s/1X3PaoPJGoRZThQnqUood5g?pwd=kp49 (提取码: kp49)
-夸克：https://pan.quark.cn/s/18449e6d0144 (提取码: VgzQ)
 ```
 <img width="1150" height="866" alt="QQ20260221-191718" src="https://github.com/user-attachments/assets/7f42c901-5630-4999-9598-299a2af6af62" />
 
