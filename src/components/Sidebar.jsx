@@ -95,7 +95,7 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                                 <div
                                     key={frame.id}
                                     className="group relative bg-zinc-900/50 rounded-lg border border-white/5 overflow-hidden hover:border-indigo-500/50 transition-all flex items-center justify-center cursor-zoom-in"
-                                    style={{ aspectRatio: frame.isPortrait ? '9/16' : '16/9' }}
+                                    style={{ aspectRatio: frame.ratio ? frame.ratio.replace(':', '/') : (frame.isPortrait ? '9/16' : '16/9') }}
                                     onClick={() => setPreviewIndex(index)}
                                 >
                                     {/* Thumbnail: Contain to show full image within the square/video aspect */}
@@ -110,7 +110,9 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                                         {new Date(frame.time * 1000).toISOString().substr(14, 5)}
                                     </div>
                                     {frame.isPortrait && (
-                                        <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-indigo-500/80 text-[8px] font-bold text-white">9:16</div>
+                                        <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-indigo-500/80 text-[8px] font-bold text-white shadow-md">
+                                            {frame.ratio || "9:16"}
+                                        </div>
                                     )}
                                 </div>
                             ))}

@@ -67,7 +67,14 @@ export function VideoStage({
         }
 
         const maskHeight = dHeight;
-        const maskWidth = dHeight * (9 / 16);
+
+        let targetAspect = 9 / 16;
+        if (portraitRatio) {
+            const ratioParts = portraitRatio.split(':');
+            targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+        }
+
+        const maskWidth = dHeight * targetAspect;
 
         // 单侧最大可移动距离 (像素)
         const maxOffset = Math.max(0, (dWidth - maskWidth) / 2);

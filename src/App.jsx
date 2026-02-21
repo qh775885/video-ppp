@@ -59,7 +59,7 @@ function App() {
     // AI Model is extremely heavy (TFJS execution blocks thread).
     // Let's Lazy Load it ONLY when portrait mode is engaged so drag logic works instantly.
     useEffect(() => {
-        if (portraitRatio === "9:16" && !aiModel && !isAiLoading) {
+        if (portraitRatio && !aiModel && !isAiLoading) {
             setIsAiLoading(true);
             setTimeout(() => {
                 import('@tensorflow/tfjs').then(() => {
@@ -153,7 +153,12 @@ function App() {
 
     // Toggle Portrait Mode (Reset offset when toggling)
     const togglePortrait = () => {
-        setPortraitRatio(prev => prev ? null : "9:16");
+        setPortraitRatio(prev => {
+            if (!prev) return "9:16";
+            if (prev === "9:16") return "3:4";
+            if (prev === "3:4") return "4:5";
+            return null; // back to landscape
+        });
         setCropOffset(0);
     };
 
@@ -184,7 +189,9 @@ function App() {
                     const vWidth = videoRefVal.videoWidth || 1920;
                     const vHeight = videoRefVal.videoHeight || 1080;
 
-                    const targetWidth = vHeight * (9 / 16);
+                    const ratioParts = portraitRatio.split(':');
+                    const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                    const targetWidth = vHeight * targetAspect;
                     const maxOffset = (vWidth - targetWidth) / 2;
 
                     let normOffset = 0;
@@ -282,8 +289,9 @@ function App() {
         const actualCropOffset = overrideOffset !== null ? overrideOffset : cropOffset;
 
         // Smart Crop Logic
-        if (portraitRatio === "9:16") {
-            const targetAspect = 9 / 16;
+        if (portraitRatio) {
+            const ratioParts = portraitRatio.split(':');
+            const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
             const targetWidth = vHeight * targetAspect;
             if (targetWidth <= vWidth) {
                 sWidth = targetWidth;
@@ -316,6 +324,7 @@ function App() {
                     time: time,
                     blob: blob,
                     isPortrait: !!portraitRatio,
+                    ratio: portraitRatio || "16:9",
                     filePath: null
                 };
 
@@ -403,7 +412,9 @@ function App() {
                         const vWidth = videoRefVal.videoWidth || 1920;
                         const vHeight = videoRefVal.videoHeight || 1080;
 
-                        const targetWidth = vHeight * (9 / 16);
+                        const ratioParts = portraitRatio.split(':');
+                        const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                        const targetWidth = vHeight * targetAspect;
                         const maxOffset = (vWidth - targetWidth) / 2;
 
                         let normOffset = 0;
@@ -813,7 +824,7 @@ function FloatingCockpit({
                             className={`h-8 px-4 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${portraitRatio ? 'bg-purple-500/30 text-purple-300 shadow-md' : 'bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
                         >
                             <Scissors size={14} />
-                            <span>竖图</span>
+                            <span>{portraitRatio ? `竖图 ${portraitRatio}` : '裁切模式'}</span>
                         </button>
 
                         {/* Auto Track sub-button */}
