@@ -167,7 +167,8 @@ export function VideoStage({
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             const file = e.dataTransfer.files[0];
             const name = file.name.toLowerCase();
-            if (file.type.startsWith('video/') || name.endsWith('.ts') || name.endsWith('.mkv')) {
+            const validExts = ['.mp4', '.mkv', '.avi', '.mov', '.ts', '.flv', '.webm', '.wmv'];
+            if (file.type.startsWith('video/') || validExts.some(ext => name.endsWith(ext))) {
                 onFileLoaded(file);
             }
         }

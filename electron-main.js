@@ -88,29 +88,59 @@ ipcMain.handle('get-video-info', (event, filePath) => {
     });
 });
 
-ipcMain.handle('convert-ts', (event, filePath) => {
+ipcMain.handle('process-media', (event, filePath) => {
     return new Promise((resolve, reject) => {
         if (!filePath) {
-            console.error("Empty filePath received in convert-ts");
-            return reject(new Error("No path specified for conversion"));
+            console.error("Empty filePath received in process-media");
+            return reject(new Error("No path specified for media processing"));
         }
-        const tempPath = path.join(os.tmpdir(), `video_ppp_converted_${Date.now()}.mp4`);
-        ffmpeg(filePath)
-            // Use stream copy (Remuxing) instead of full re-encoding! This takes 1 second instead of minutes!
-            .outputOptions([
-                '-c copy',             // Copy video and audio perfectly without wasting CPU on encoding
-                '-map 0:v:0',          // ONLY grab the MAIN video track (drops broken sub-tracks that caused errors)
-                '-map 0:a:0?',         // ONLY grab the 1st audio track, ignore errors if no audio
-                '-ignore_unknown',     // Drops weird TS data streams (subtitles, text overlays) that break MP4 muxer
+        
+        ffmpeg.ffprobe(filePath, (err, metadata) => {
+            if (err) {
+                console.error("FFprobe Error:", err);
+                return reject(err);
+            }
+            
+            const vStream = metadata.streams.find(s => s.codec_type === 'video');
+            const aStream = metadata.streams.find(s => s.codec_type === 'audio');
+            const vCodec = vStream ? (vStream.codec_name || '').toLowerCase() : '';
+            const aCodec = aStream ? (aStream.codec_name || '').toLowerCase() : '';
+            
+            const tempPath = path.join(os.tmpdir(), `vme_${Date.now()}.mp4`);
+            const command = ffmpeg(filePath);
+            
+            // HEVC(H.265) and older formats need transcode on standard Chromium, otherwise remux is fast and lossless.
+            const needsVideoTranscode = ['hevc', 'h265', 'mpeg4', 'mpeg2video', 'msmpeg4', 'divx', 'xvid'].includes(vCodec);
+            
+            if (needsVideoTranscode) {
+                command.outputOptions(['-c:v libx264', '-preset ultrafast', '-crf 23']); // ultrafast encoding
+            } else if (vCodec) {
+                command.outputOptions(['-c:v copy']); // remuxing
+            }
+
+            if (aCodec === 'aac') {
+                command.outputOptions(['-c:a copy']);
+            } else if (aStream) {
+                command.outputOptions(['-c:a aac', '-b:a 128k']);
+            } else {
+                command.outputOptions(['-an']);
+            }
+            
+            command.outputOptions([
+                '-map 0:v:0',          // ONLY grab the MAIN video track
+                '-map 0:a:0?',         // ONLY grab the 1st audio track if exists
+                '-ignore_unknown',     // Drops weird IDM/TS data streams that break MP4 muxer
                 '-f mp4',
+                '-movflags +faststart', // CRITICAL: Moves MOOV atom to beginning, completely fixes IDM drag-and-drop bug
                 '-y'
             ])
             .on('end', () => resolve(tempPath))
             .on('error', (err, stdout, stderr) => {
-                console.error("FFMPEG REMUX ERROR:", stderr);
+                console.error("FFMPEG PROCESS MEDIA ERROR:", stderr);
                 reject(new Error(`${err.message} | STDERR: ${stderr}`));
             })
             .save(tempPath);
+        });
     });
 });
 

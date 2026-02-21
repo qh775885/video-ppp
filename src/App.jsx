@@ -44,22 +44,28 @@ function App() {
     const [isAiLoading, setIsAiLoading] = useState(false);
     const isDetectingRef = useRef(false);
 
-    // Preload AI Model on mount to ensure zero-wait when features are actually toggled
-    useEffect(() => {
+    // Load AI Model ON-DEMAND, completely eliminating any startup CPU spike or drag freezes
+    const loadAiModel = () => {
         if (!aiModel && !isAiLoading) {
             setIsAiLoading(true);
-            setTimeout(() => {
-                import('@tensorflow/tfjs').then(() => {
-                    import('@tensorflow-models/coco-ssd').then(cocoSsd => {
-                        cocoSsd.load({ base: 'lite_mobilenet_v2' }).then(model => {
-                            setAiModel(model);
-                            setIsAiLoading(false);
-                        });
+            import('@tensorflow/tfjs').then(() => {
+                import('@tensorflow-models/coco-ssd').then(cocoSsd => {
+                    cocoSsd.load({ base: 'lite_mobilenet_v2' }).then(model => {
+                        setAiModel(model);
+                        setIsAiLoading(false);
                     });
                 });
-            }, 1000); // 1s delayed start so it doesn't block window paint/file-drop zero-delay
+            });
         }
-    }, [aiModel, isAiLoading]);
+    };
+
+    // Toggle logic now intercepts and loads model
+    const handleToggleAutoTrack = () => {
+        if (!autoTrack && !aiModel) {
+            loadAiModel();
+        }
+        setAutoTrack(!autoTrack);
+    };
 
     // Sync end range when duration loads
     useEffect(() => {
@@ -242,10 +248,8 @@ function App() {
                 return;
             }
 
-            // 1. Check if TS, trigger conversion
-            if (file.name.toLowerCase().endsWith('.ts') || file.name.toLowerCase().endsWith('.mkv')) {
-                loadedPath = await ipcRenderer.invoke('convert-ts', loadedPath);
-            }
+            // 1. Run through FFmpeg Media Engine to normalize format, fix IDM errors, and ensure compatibility
+            loadedPath = await ipcRenderer.invoke('process-media', loadedPath);
 
             // 2. Extract accurate FPS via ffprobe
             const info = await ipcRenderer.invoke('get-video-info', loadedPath);
@@ -492,8 +496,8 @@ function App() {
                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
                     <div className="flex flex-col items-center gap-4 text-white">
                         <Loader2 className="animate-spin text-indigo-500" size={48} />
-                        <div className="font-bold tracking-widest text-lg">正在底层解码与转封装 (TS)...</div>
-                        <div className="text-zinc-400 text-sm">彻底解决格式与逐帧定位</div>
+                        <div className="font-bold tracking-widest text-lg">FFmpeg 底层媒体引擎处理中...</div>
+                        <div className="text-zinc-400 text-sm">正在修复视频封装与编码兼容性</div>
                     </div>
                 </div>
             )}
@@ -542,7 +546,7 @@ function App() {
                             onSetPortraitMode={setPortraitMode}
 
                             autoTrack={autoTrack}
-                            onToggleAutoTrack={() => setAutoTrack(!autoTrack)}
+                            onToggleAutoTrack={handleToggleAutoTrack}
                             aiModelReady={!!aiModel}
                             isAiLoading={isAiLoading}
 
@@ -826,20 +830,21 @@ function FloatingCockpit({
                         {portraitRatio && (
                             <button
                                 onClick={onToggleAutoTrack}
-                                disabled={!aiModelReady && !isAiLoading}
-                                title={isAiLoading ? "模型加载中..." : (aiModelReady ? "AI 智能跟踪人物" : "")}
-                                className={`h-8 px-2 ml-0.5 rounded-lg flex items-center justify-center gap-1 text-xs font-bold whitespace-nowrap shrink-0 transition-all ${autoTrack ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]'
-                                    : 'bg-white/5 text-indigo-300/60 hover:text-indigo-200 hover:bg-white/10'
+                                disabled={isAiLoading}
+                                className={`h-8 px-3 ml-0.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold whitespace-nowrap shrink-0 transition-all ${autoTrack ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]'
+                                    : 'bg-white/5 text-indigo-300/80 hover:text-indigo-200 hover:bg-white/10'
                                     }`}
                             >
                                 {isAiLoading ? (
-                                    <Loader2 size={12} className="animate-spin opacity-50" />
+                                    <>
+                                        <Loader2 size={12} className="animate-spin opacity-80" />
+                                        <span className="opacity-80 text-[11px] font-mono tracking-widest">框架加载中...</span>
+                                    </>
                                 ) : (
-                                    <BrainCircuit size={14} className={!aiModelReady ? "opacity-50" : ""} />
+                                    <span className={!aiModelReady ? "opacity-70" : ""}>
+                                        {autoTrack ? 'AI 锁定已开' : '开启 AI 锁定'}
+                                    </span>
                                 )}
-                                <span className={!aiModelReady ? "opacity-50" : ""}>
-                                    {autoTrack ? 'AI 追踪' : 'AI 锁定'}
-                                </span>
                             </button>
                         )}
                     </div>

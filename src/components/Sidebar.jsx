@@ -4,6 +4,7 @@ import { Trash2, FolderOpen, Image as ImageIcon, Download, X, ChevronLeft, Chevr
 
 export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDir }) {
     const [previewIndex, setPreviewIndex] = useState(-1); // -1 means closed
+    const [isAboutOpen, setIsAboutOpen] = useState(false);
 
     // --- Lightbox Logic ---
     const handleNext = useCallback(() => {
@@ -122,7 +123,7 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
             </div>
 
             {/* Bottom Actions */}
-            <div className="p-5 border-t border-white/5 bg-zinc-950/50 shrink-0">
+            <div className="p-5 border-t border-white/5 bg-zinc-950/50 shrink-0 flex flex-col gap-3">
                 <button
                     onClick={onDownload}
                     disabled={frames.length === 0}
@@ -134,7 +135,58 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                     <FolderOpen size={16} />
                     <span>打开保存文件夹</span>
                 </button>
+
+                <div className="flex items-center justify-between text-[10px] text-zinc-600 font-mono mt-1">
+                    <button onClick={() => setIsAboutOpen(true)} className="hover:text-zinc-400 transition-colors cursor-pointer">关于本软件</button>
+                    <span>v2.0.7</span>
+                </div>
             </div>
+
+            {/* About Modal */}
+            {isAboutOpen && createPortal(
+                <div
+                    autoFocus
+                    tabIndex={0}
+                    className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200 select-none outline-none"
+                    onClick={() => setIsAboutOpen(false)}
+                >
+                    <div className="w-[400px] bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-6 flex flex-col gap-4 relative" onClick={e => e.stopPropagation()}>
+                        <button
+                            className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors"
+                            onClick={() => setIsAboutOpen(false)}
+                        >
+                            <X size={18} />
+                        </button>
+
+                        <div className="flex flex-col items-center gap-2 mb-2">
+                            <div className="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-2xl shadow-lg flex items-center justify-center mb-2">
+                                <ImageIcon size={32} className="text-white drop-shadow-md" />
+                            </div>
+                            <h2 className="text-xl font-bold text-white tracking-widest">视频截图神器</h2>
+                            <span className="text-xs font-mono text-zinc-400">v2.0.7 (开源免费版)</span>
+                        </div>
+
+                        <div className="text-sm text-zinc-300 leading-relaxed text-center">
+                            极速轻量级的本地视频帧提取工具，专为推特创作者与素材切片优化。<br /><br />
+                            支持 FFmpeg 格式修复、AI 智能人像锁定，无损批量提取高质量视频画面，彻底告别模糊废片。
+                        </div>
+
+                        <div className="h-px w-full bg-white/10 my-2"></div>
+
+                        <div className="flex flex-col items-center gap-1">
+                            <span className="text-[10px] text-zinc-500">开源地址 (GitHub)</span>
+                            <a
+                                href="#"
+                                onClick={(e) => { e.preventDefault(); window.require('electron').shell.openExternal('https://github.com/qh775885/video-ppp'); }}
+                                className="text-indigo-400 hover:text-indigo-300 hover:underline text-[11px] font-mono transition-colors"
+                            >
+                                https://github.com/qh775885/video-ppp
+                            </a>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
 
             {/* Lightbox Modal (Full Screen with Nav) - Usage of Portal to break out of Sidebar container */}
             {previewIndex !== -1 && currentFrame && createPortal(
