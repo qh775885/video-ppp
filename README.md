@@ -1,6 +1,13 @@
 # 视频截图神器
 一款基于 React + Electron 的现代化视频截图与自动提取工具。
 
+```
+网盘下载地址
+迅雷：https://pan.xunlei.com/s/VOiGf_rK0uVZCW5AfyBHI4_OA1?pwd=bcad
+百度：https://pan.baidu.com/s/1X3PaoPJGoRZThQnqUood5g?pwd=kp49 (提取码: kp49)
+夸克：https://pan.quark.cn/s/18449e6d0144 (提取码: VgzQ)
+```
+
 ## v2.0.6 新版特性 
 - **无限制格式支持**：不仅支持 MP4，还能秒开 TS 和 MKV，告别格式转换带来的烦恼。
 - **多比例竖屏与 AI 智能追踪**：支持 9:16、3:4、4:5 多比例竖图自由切换。开启 AI 追踪模式后，裁剪框将自动寻找主角并平滑跟随人脸/身体，免去手工调整（纯本地计算，安全免费无痕）。
