@@ -43,6 +43,7 @@ function App() {
     const [aiModel, setAiModel] = useState(null);
     const [isAiLoading, setIsAiLoading] = useState(false);
     const isDetectingRef = useRef(false);
+    const lastTrackedOffsetRef = useRef(0);
 
     // Load AI Model ON-DEMAND, completely eliminating any startup CPU spike or drag freezes
     const loadAiModel = () => {
@@ -173,8 +174,13 @@ function App() {
         if (autoTrack && aiModel && portraitRatio && videoRefVal && !isDetectingRef.current) {
             isDetectingRef.current = true;
             try {
-                const predictions = await aiModel.detect(videoRefVal);
-                const person = predictions.find(p => p.class === 'person');
+                // 恢复阈值到 0.45 过滤掉枕头和床单等假区域。
+                // 若找不到对象，自然会跳过更新，保留 lastTrackedOffsetRef 的状态！
+                const predictions = await aiModel.detect(videoRefVal, 20, 0.45);
+                const persons = predictions.filter(p => p.class === 'person');
+                // 选取画面中最大的人体框
+                const person = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
+
                 if (person) {
                     const [x, y, w, h] = person.bbox;
                     const cx = x + w / 2;
@@ -191,7 +197,9 @@ function App() {
                         normOffset = (cx - vWidth / 2) / maxOffset;
                     }
 
-                    setCropOffset(Math.max(-1, Math.min(1, normOffset)));
+                    const safeOffset = Math.max(-1, Math.min(1, normOffset));
+                    setCropOffset(safeOffset);
+                    lastTrackedOffsetRef.current = safeOffset;
                 }
             } catch (err) {
                 console.error("AI tracking err:", err);
@@ -381,6 +389,8 @@ function App() {
         // Distribute frames evenly from Start to End (Inclusive)
         const interval = (targetCount > 1) ? activeDuration / (targetCount - 1) : 0;
 
+        let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+
         for (let i = 0; i < targetCount; i++) {
             const timeToCapture = effectiveStart + (i * interval);
             if (timeToCapture > effectiveEnd) break;
@@ -391,11 +401,16 @@ function App() {
             // Wait for video frame to decode...
             await new Promise(r => setTimeout(r, 450));
 
+            let didDetect = false;
+
             // Force AI detection inline before capture if AutoTrack is on
             if (autoTrack && aiModel && portraitRatio) {
                 try {
-                    const predictions = await aiModel.detect(videoRefVal);
-                    const person = predictions.find(p => p.class === 'person');
+                    // 恢复阈值到 0.45 放噪点
+                    const predictions = await aiModel.detect(videoRefVal, 20, 0.45);
+                    const persons = predictions.filter(p => p.class === 'person');
+                    const person = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
+
                     if (person) {
                         const [x, y, w, h] = person.bbox;
                         const cx = x + w / 2;
@@ -412,82 +427,121 @@ function App() {
                             normOffset = (cx - vWidth / 2) / maxOffset;
                         }
 
-                        // We cannot rely solely on setCropOffset state here because captureFrame 
-                        // reads from current render cycle state. We must pass it explicitly to captureFrame.
-                        await captureFrame(Math.max(-1, Math.min(1, normOffset)));
-                        continue;
+                        // update the trackingOffset so it will be used when AI loses tracking (e.g. only butt visible)
+                        trackingOffset = Math.max(-1, Math.min(1, normOffset));
+
+                        await captureFrame(trackingOffset);
+                        didDetect = true;
                     }
                 } catch (err) {
                     console.error("Batch AI detect failed:", err);
                 }
             }
 
-            // Fallback: normal capture if AI tracking is off or failed
-            await captureFrame(cropOffset);
+            // Fallback: normal capture using either the last valid tracking offset or standard offset
+            if (!didDetect) {
+                await captureFrame(autoTrack ? trackingOffset : cropOffset);
+            }
         }
 
         setIsExtracting(false);
     };
 
-    // Keyboard Shortcuts
-    const lastSeekTime = useRef(0);
-    const targetSeekTime = useRef(null);
-    const seekDebounceRef = useRef(null);
+    // 使用 stateRef 持久化最新状态，彻底避免 React 渲染销毁事件监听引起的“长按断触”问题
+    const stateRef = useRef({ videoRefVal, duration, fps, seekStep, togglePlay, captureFrame, handleSetStart, handleSetEnd, handleSeek });
+    useEffect(() => {
+        stateRef.current = { videoRefVal, duration, fps, seekStep, togglePlay, captureFrame, handleSetStart, handleSetEnd, handleSeek };
+    });
+
+    const activeSeekInterval = useRef(null);
 
     useEffect(() => {
+        const processSeekOnce = (direction) => {
+            const { videoRefVal, duration, fps, seekStep, handleSeek } = stateRef.current;
+            if (!videoRefVal) return;
+            let newTime = videoRefVal.currentTime + direction * seekStep * (1 / fps);
+            newTime = Math.max(0, Math.min(duration, newTime));
+            handleSeek(newTime);
+        };
+
+        const startSeek = (direction) => {
+            if (activeSeekInterval.current) return;
+            processSeekOnce(direction); // trigger immediately once
+            activeSeekInterval.current = setInterval(() => {
+                processSeekOnce(direction);
+            }, 50); // 连续按50ms一跳，既不卡司机，视觉也丝滑
+        };
+
+        const stopSeek = () => {
+            if (activeSeekInterval.current) {
+                clearInterval(activeSeekInterval.current);
+                activeSeekInterval.current = null;
+            }
+        };
+
         const handleKeyDown = (e) => {
             if (e.target.tagName === 'INPUT') return;
-
-            const now = performance.now();
-            const processSeek = (direction) => {
-                let base = targetSeekTime.current !== null ? targetSeekTime.current : (videoRefVal ? videoRefVal.currentTime : currentTime);
-                let newTime = base + direction * seekStep * (1 / fps);
-                newTime = Math.max(0, Math.min(duration, newTime));
-                targetSeekTime.current = newTime;
-
-                // Restrict physical decoder seek commands to ~8 times per second max (120ms)
-                // This prevents the browser decoder from crashing/blacking out when holding the key
-                if (now - lastSeekTime.current > 120) {
-                    lastSeekTime.current = now;
-                    handleSeek(targetSeekTime.current);
-                    targetSeekTime.current = null;
-                } else {
-                    clearTimeout(seekDebounceRef.current);
-                    seekDebounceRef.current = setTimeout(() => {
-                        if (targetSeekTime.current !== null) {
-                            handleSeek(targetSeekTime.current);
-                            targetSeekTime.current = null;
-                        }
-                    }, 120);
-                }
-            };
+            const { togglePlay, captureFrame, handleSetStart, handleSetEnd } = stateRef.current;
 
             switch (e.code) {
                 case 'Space':
                     e.preventDefault();
+                    if (e.repeat) return; // ignore hold space
                     togglePlay();
                     break;
-                case 'KeyS':             // <--- 新增截图快捷键
+                case 'KeyS':
                     e.preventDefault();
+                    if (e.repeat) return; // ignore hold S
                     captureFrame();
                     break;
                 case 'ArrowLeft':
                     e.preventDefault();
-                    processSeek(-1);
+                    if (!e.repeat) startSeek(-1);
                     break;
                 case 'ArrowRight':
                     e.preventDefault();
-                    processSeek(1);
+                    if (!e.repeat) startSeek(1);
                     break;
-                // Add shortcuts for In/Out points? Maybe I and O?
                 case 'KeyI': handleSetStart(); break;
                 case 'KeyO': handleSetEnd(); break;
             }
         };
 
+        const handleKeyUp = (e) => {
+            if (e.target.tagName === 'INPUT') return;
+            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+                stopSeek();
+            }
+        };
+
+        const handleMouseDown = (e) => {
+            if (e.target.tagName === 'INPUT') return;
+            if (e.button === 3 || e.button === 4) {
+                e.preventDefault();
+                startSeek(e.button === 4 ? 1 : -1);
+            }
+        };
+
+        const handleMouseUpExtra = (e) => {
+            if (e.button === 3 || e.button === 4) {
+                e.preventDefault();
+                stopSeek();
+            }
+        };
+
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [videoRefVal, isPlaying, currentTime, duration, seekStep, captureFrame, rangeStart, rangeEnd, fps]);
+        window.addEventListener('keyup', handleKeyUp);
+        window.addEventListener('mousedown', handleMouseDown);
+        window.addEventListener('mouseup', handleMouseUpExtra);
+
+        return () => {
+            stopSeek();
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+            window.removeEventListener('mousedown', handleMouseDown);
+            window.removeEventListener('mouseup', handleMouseUpExtra);
+        };
+    }, []); // <-- 依赖数组为空！初始化执行一次，靠 stateRef 穿透状态
 
     return (
         <div className="flex h-screen w-screen bg-black overflow-hidden font-sans text-sm select-none">
