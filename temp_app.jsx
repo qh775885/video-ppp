@@ -44,7 +44,6 @@ function App() {
     const [isAiLoading, setIsAiLoading] = useState(false);
     const isDetectingRef = useRef(false);
     const lastTrackedOffsetRef = useRef(0);
-    const manualLockTargetRef = useRef(null); // Used for "Mode B: Manual Overridden Lock"
 
     // Load AI Model ON-DEMAND, completely eliminating any startup CPU spike or drag freezes
     const loadAiModel = () => {
@@ -65,10 +64,6 @@ function App() {
     const handleToggleAutoTrack = () => {
         if (!autoTrack && !aiModel) {
             loadAiModel();
-        }
-        if (autoTrack) {
-            // Un-toggling tracking completely resets any manual lock!
-            manualLockTargetRef.current = null;
         }
         setAutoTrack(!autoTrack);
     };
@@ -158,15 +153,6 @@ function App() {
             setPortraitRatio(mode);
         }
         setCropOffset(0);
-        manualLockTargetRef.current = null; // Clear lock across ratio swaps
-    };
-
-    // Manual Object Priority Lock Hook
-    const handleManualCropMove = (offset) => {
-        setCropOffset(offset);
-        if (autoTrack) {
-            manualLockTargetRef.current = offset; // Force override to 'Target Lock Mode'
-        }
     };
 
     // --- Handlers ---
@@ -184,80 +170,41 @@ function App() {
         const time = e.target.currentTime;
         setCurrentTime(time);
 
-        // AI Person Tracking or Manual Object Tracking
+        // AI Person Tracking
         if (autoTrack && aiModel && portraitRatio && videoRefVal && !isDetectingRef.current) {
             isDetectingRef.current = true;
             try {
-                // 如果开启了手动锁定，下探检测阈值以锁定背影/臀部等微小特征，不再局限于 person，允许所有特征
-                // 默认模式则使用 0.45 严谨阈值，防止把床被认错为人
-                const threshold = manualLockTargetRef.current !== null ? 0.05 : 0.45;
-                const predictions = await aiModel.detect(videoRefVal, 30, threshold);
+                // 恢复阈值到 0.45 过滤掉枕头和床单等假区域。
+                // 若找不到对象，自然会跳过更新，保留 lastTrackedOffsetRef 的状态！
+                const predictions = await aiModel.detect(videoRefVal, 20, 0.45);
+                const persons = predictions.filter(p => p.class === 'person');
+                // 选取画面中最大的人体框
+                const person = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
 
-                let bestTarget = null;
-                const vWidth = videoRefVal.videoWidth || 1920;
-                const vHeight = videoRefVal.videoHeight || 1080;
-                const ratioParts = portraitRatio.split(':');
-                const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-                const targetWidth = vHeight * targetAspect;
-                const maxOffset = (vWidth - targetWidth) / 2;
+                if (person) {
+                    const [x, y, w, h] = person.bbox;
+                    const cx = x + w / 2;
+                    const vWidth = videoRefVal.videoWidth || 1920;
+                    const vHeight = videoRefVal.videoHeight || 1080;
 
-                if (manualLockTargetRef.current !== null) {
-                    // ====== 模式 B：强干预全物种锁定模式 ======
-                    let targets = predictions.filter(p => p.class === 'person');
-                    if (targets.length === 0) targets = predictions; // 如果没匹配到人，完全开放给非人对象（例如床单、边角、错误识别），只要它在那儿！
+                    const ratioParts = portraitRatio.split(':');
+                    const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                    const targetWidth = vHeight * targetAspect;
+                    const maxOffset = (vWidth - targetWidth) / 2;
 
-                    if (targets.length > 0) {
-                        const expectedCenterPx = manualLockTargetRef.current * maxOffset + vWidth / 2;
-                        bestTarget = targets.sort((a, b) => {
-                            const cxA = a.bbox[0] + a.bbox[2] / 2;
-                            const cxB = b.bbox[0] + b.bbox[2] / 2;
-                            const distA = Math.abs(cxA - expectedCenterPx);
-                            const distB = Math.abs(cxB - expectedCenterPx);
-                            const diff = distA - distB;
-                            // 如果距离相差极小（50个物理像素以内），比较大小
-                            if (Math.abs(diff) > 50) return diff;
-                            return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]);
-                        })[0];
-                    }
-                } else {
-                    // ====== 模式 A：默认严谨人物跟踪模式 ======
-                    const persons = predictions.filter(p => p.class === 'person');
-                    if (persons.length > 0) {
-                        bestTarget = persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0];  // 默认找画幅最大的正交人物，不被小角落骗
-                    }
-                }
-
-                // 处理最终结果更新
-                if (bestTarget) {
-                    const cx = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
                     let normOffset = 0;
-                    if (maxOffset > 0) normOffset = (cx - vWidth / 2) / maxOffset;
-                    let safeOffset = Math.max(-1, Math.min(1, normOffset));
-
-                    if (manualLockTargetRef.current !== null) {
-                        // 防暴墙：锁定模式下严禁跨度超过0.5半屏的跳跃（假人现象）
-                        const jumpDist = Math.abs(safeOffset - manualLockTargetRef.current);
-                        if (jumpDist > 0.5) {
-                            safeOffset = manualLockTargetRef.current; // 太远了！直接无视本次识别，按在原地！
-                        } else {
-                            // 正常的连续跟踪，丝滑混合推进锁定目标心
-                            safeOffset = manualLockTargetRef.current * 0.7 + safeOffset * 0.3;
-                            manualLockTargetRef.current = safeOffset;
-                        }
-                    } else {
-                        // 自动追踪模式的惯性过滤
-                        if (lastTrackedOffsetRef.current !== undefined) {
-                            safeOffset = lastTrackedOffsetRef.current * 0.7 + safeOffset * 0.3;
-                        }
+                    if (maxOffset > 0) {
+                        normOffset = (cx - vWidth / 2) / maxOffset;
                     }
 
+                    const safeOffset = Math.max(-1, Math.min(1, normOffset));
                     setCropOffset(safeOffset);
-                    lastTrackedOffsetRef.current = safeOffset; // Universal tracker ref fallback
+                    lastTrackedOffsetRef.current = safeOffset;
                 }
             } catch (err) {
                 console.error("AI tracking err:", err);
             }
-            setTimeout(() => { isDetectingRef.current = false; }, 80);
+            setTimeout(() => { isDetectingRef.current = false; }, 100); // 10fps limit for AI to save CPU
         }
     };
 
@@ -278,7 +225,6 @@ function App() {
             setCurrentTime(time);
         }
     };
-
 
     const handleFileLoaded = async (file) => {
         setIsVideoLoading(true);
@@ -460,60 +406,29 @@ function App() {
             // Force AI detection inline before capture if AutoTrack is on
             if (autoTrack && aiModel && portraitRatio) {
                 try {
-                    const threshold = manualLockTargetRef.current !== null ? 0.05 : 0.45;
-                    const predictions = await aiModel.detect(videoRefVal, 30, threshold);
+                    // 恢复阈值到 0.45 放噪点
+                    const predictions = await aiModel.detect(videoRefVal, 20, 0.45);
+                    const persons = predictions.filter(p => p.class === 'person');
+                    const person = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
 
-                    let bestTarget = null;
-                    const vWidth = videoRefVal.videoWidth || 1920;
-                    const vHeight = videoRefVal.videoHeight || 1080;
-                    const ratioParts = portraitRatio.split(':');
-                    const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-                    const targetWidth = vHeight * targetAspect;
-                    const maxOffset = (vWidth - targetWidth) / 2;
+                    if (person) {
+                        const [x, y, w, h] = person.bbox;
+                        const cx = x + w / 2;
+                        const vWidth = videoRefVal.videoWidth || 1920;
+                        const vHeight = videoRefVal.videoHeight || 1080;
 
-                    if (manualLockTargetRef.current !== null) {
-                        let targets = predictions.filter(p => p.class === 'person');
-                        if (targets.length === 0) targets = predictions;
+                        const ratioParts = portraitRatio.split(':');
+                        const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                        const targetWidth = vHeight * targetAspect;
+                        const maxOffset = (vWidth - targetWidth) / 2;
 
-                        if (targets.length > 0) {
-                            const expectedCenterPx = manualLockTargetRef.current * maxOffset + vWidth / 2;
-                            bestTarget = targets.sort((a, b) => {
-                                const distA = Math.abs((a.bbox[0] + a.bbox[2] / 2) - expectedCenterPx);
-                                const distB = Math.abs((b.bbox[0] + b.bbox[2] / 2) - expectedCenterPx);
-                                const diff = distA - distB;
-                                if (Math.abs(diff) > 50) return diff;
-                                return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]);
-                            })[0];
-                        }
-                    } else {
-                        const persons = predictions.filter(p => p.class === 'person');
-                        if (persons.length > 0) {
-                            bestTarget = persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0];
-                        }
-                    }
-
-                    if (bestTarget) {
-                        const cx = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
                         let normOffset = 0;
-                        if (maxOffset > 0) normOffset = (cx - vWidth / 2) / maxOffset;
-                        let rawOffset = Math.max(-1, Math.min(1, normOffset));
-
-                        if (manualLockTargetRef.current !== null) {
-                            const jumpDist = Math.abs(rawOffset - manualLockTargetRef.current);
-                            if (jumpDist > 0.5) {
-                                rawOffset = manualLockTargetRef.current;
-                            } else {
-                                rawOffset = manualLockTargetRef.current * 0.7 + rawOffset * 0.3;
-                                manualLockTargetRef.current = rawOffset;
-                            }
-                        } else {
-                            if (lastTrackedOffsetRef.current !== undefined) {
-                                rawOffset = lastTrackedOffsetRef.current * 0.7 + rawOffset * 0.3;
-                            }
+                        if (maxOffset > 0) {
+                            normOffset = (cx - vWidth / 2) / maxOffset;
                         }
 
-                        trackingOffset = rawOffset;
-                        lastTrackedOffsetRef.current = rawOffset;
+                        // update the trackingOffset so it will be used when AI loses tracking (e.g. only butt visible)
+                        trackingOffset = Math.max(-1, Math.min(1, normOffset));
 
                         await captureFrame(trackingOffset);
                         didDetect = true;
@@ -653,7 +568,7 @@ function App() {
                     onCapture={captureFrame} // <--- 传递截图函数
                     portraitRatio={portraitRatio} // <--- 传递竖图状态给 Stage 显示遮罩
                     cropOffset={cropOffset}    // <--- Pass State
-                    onCropMove={handleManualCropMove} // <--- 绑定到含有智能锁定接管逻辑的句柄上
+                    onCropMove={setCropOffset} // <--- Pass Setter
                 />
 
                 {/* Zone B: The Cockpit */}
