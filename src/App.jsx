@@ -180,11 +180,33 @@ function App() {
 
                 let bestPerson = null;
                 if (persons.length > 0) {
-                    // 当有多个人形框杂音时，既看面积，更看之前跟踪的惯性位置
+                    const vWidth = videoRefVal.videoWidth || 1920;
+                    const vHeight = videoRefVal.videoHeight || 1080;
+                    const ratioParts = portraitRatio.split(':');
+                    const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                    const targetWidth = vHeight * targetAspect;
+                    const maxOffset = (vWidth - targetWidth) / 2;
+
+                    // 获取当前锁定点（如果没锁定过，就取当前裁剪框中心）
+                    const currentLockOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+
+                    // 革命性升级：按照距心锁定距离（Spatial Lock-On）排序
                     bestPerson = persons.sort((a, b) => {
-                        const areaA = a.bbox[2] * a.bbox[3];
-                        const areaB = b.bbox[2] * b.bbox[3];
-                        return areaB - areaA; // 面积最大的优先
+                        const cxA = a.bbox[0] + a.bbox[2] / 2;
+                        let offsetA = 0;
+                        if (maxOffset > 0) offsetA = (cxA - vWidth / 2) / maxOffset;
+                        const distA = Math.abs(Math.max(-1, Math.min(1, offsetA)) - currentLockOffset);
+
+                        const cxB = b.bbox[0] + b.bbox[2] / 2;
+                        let offsetB = 0;
+                        if (maxOffset > 0) offsetB = (cxB - vWidth / 2) / maxOffset;
+                        const distB = Math.abs(Math.max(-1, Math.min(1, offsetB)) - currentLockOffset);
+
+                        // 距离差异 > 0.1 视为不同人选距离近的，距离极其贴合时才用面积兜底
+                        const diff = distA - distB;
+                        if (Math.abs(diff) > 0.1) return diff;
+
+                        return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]); // 面积大的优先
                     })[0];
                 }
 
@@ -237,6 +259,12 @@ function App() {
             videoRefVal.currentTime = time;
             setCurrentTime(time);
         }
+    };
+
+    // 强锁定吸附：当用户拖动裁剪框时，将该坐标设为“最新追踪信标”
+    const handleManualCropMove = (offset) => {
+        setCropOffset(offset);
+        lastTrackedOffsetRef.current = offset; // 强制接管 AI 记忆
     };
 
     const handleFileLoaded = async (file) => {
@@ -422,7 +450,30 @@ function App() {
                     // 同理，批量截图中也下放到底层阈值 0.05
                     const predictions = await aiModel.detect(videoRefVal, 30, 0.05);
                     const persons = predictions.filter(p => p.class === 'person');
-                    const bestPerson = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
+                    let bestPerson = null;
+                    if (persons.length > 0) {
+                        const vWidth = videoRefVal.videoWidth || 1920;
+                        const vHeight = videoRefVal.videoHeight || 1080;
+                        const ratioParts = portraitRatio.split(':');
+                        const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                        const targetWidth = vHeight * targetAspect;
+                        const maxOffset = (vWidth - targetWidth) / 2;
+                        const currentLockOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+
+                        bestPerson = persons.sort((a, b) => {
+                            const cxA = a.bbox[0] + a.bbox[2] / 2;
+                            let oA = 0; if (maxOffset > 0) oA = (cxA - vWidth / 2) / maxOffset;
+                            const dA = Math.abs(Math.max(-1, Math.min(1, oA)) - currentLockOffset);
+
+                            const cxB = b.bbox[0] + b.bbox[2] / 2;
+                            let oB = 0; if (maxOffset > 0) oB = (cxB - vWidth / 2) / maxOffset;
+                            const dB = Math.abs(Math.max(-1, Math.min(1, oB)) - currentLockOffset);
+
+                            const diff = dA - dB;
+                            if (Math.abs(diff) > 0.1) return diff;
+                            return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]);
+                        })[0];
+                    }
 
                     if (bestPerson) {
                         const [x, y, w, h] = bestPerson.bbox;
@@ -590,7 +641,7 @@ function App() {
                     onCapture={captureFrame} // <--- 传递截图函数
                     portraitRatio={portraitRatio} // <--- 传递竖图状态给 Stage 显示遮罩
                     cropOffset={cropOffset}    // <--- Pass State
-                    onCropMove={setCropOffset} // <--- Pass Setter
+                    onCropMove={handleManualCropMove} // <--- Pass Setter with AI Lock Override
                 />
 
                 {/* Zone B: The Cockpit */}
