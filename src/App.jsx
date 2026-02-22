@@ -174,15 +174,22 @@ function App() {
         if (autoTrack && aiModel && portraitRatio && videoRefVal && !isDetectingRef.current) {
             isDetectingRef.current = true;
             try {
-                // 恢复阈值到 0.45 过滤掉枕头和床单等假区域。
-                // 若找不到对象，自然会跳过更新，保留 lastTrackedOffsetRef 的状态！
-                const predictions = await aiModel.detect(videoRefVal, 20, 0.45);
+                // 【视觉大模型级强化】极限阈值 0.05，宁杀错不放过。用于哪怕只有背部/臀部/局部手臂等高难度局部侦测
+                const predictions = await aiModel.detect(videoRefVal, 30, 0.05);
                 const persons = predictions.filter(p => p.class === 'person');
-                // 选取画面中最大的人体框
-                const person = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
 
-                if (person) {
-                    const [x, y, w, h] = person.bbox;
+                let bestPerson = null;
+                if (persons.length > 0) {
+                    // 当有多个人形框杂音时，既看面积，更看之前跟踪的惯性位置
+                    bestPerson = persons.sort((a, b) => {
+                        const areaA = a.bbox[2] * a.bbox[3];
+                        const areaB = b.bbox[2] * b.bbox[3];
+                        return areaB - areaA; // 面积最大的优先
+                    })[0];
+                }
+
+                if (bestPerson) {
+                    const [x, y, w, h] = bestPerson.bbox;
                     const cx = x + w / 2;
                     const vWidth = videoRefVal.videoWidth || 1920;
                     const vHeight = videoRefVal.videoHeight || 1080;
@@ -197,14 +204,20 @@ function App() {
                         normOffset = (cx - vWidth / 2) / maxOffset;
                     }
 
-                    const safeOffset = Math.max(-1, Math.min(1, normOffset));
+                    let safeOffset = Math.max(-1, Math.min(1, normOffset));
+
+                    // 【惯性滤波】为了对抗极低阈值带来的画面乱闪干扰，我们引入 30%新 + 70%老的黄油般丝滑混合过渡
+                    if (lastTrackedOffsetRef.current !== undefined) {
+                        safeOffset = lastTrackedOffsetRef.current * 0.7 + safeOffset * 0.3;
+                    }
+
                     setCropOffset(safeOffset);
                     lastTrackedOffsetRef.current = safeOffset;
                 }
             } catch (err) {
                 console.error("AI tracking err:", err);
             }
-            setTimeout(() => { isDetectingRef.current = false; }, 100); // 10fps limit for AI to save CPU
+            setTimeout(() => { isDetectingRef.current = false; }, 80); // 略微提高到 ~12fps 获取更顺滑动态
         }
     };
 
@@ -406,13 +419,13 @@ function App() {
             // Force AI detection inline before capture if AutoTrack is on
             if (autoTrack && aiModel && portraitRatio) {
                 try {
-                    // 恢复阈值到 0.45 放噪点
-                    const predictions = await aiModel.detect(videoRefVal, 20, 0.45);
+                    // 同理，批量截图中也下放到底层阈值 0.05
+                    const predictions = await aiModel.detect(videoRefVal, 30, 0.05);
                     const persons = predictions.filter(p => p.class === 'person');
-                    const person = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
+                    const bestPerson = persons.length > 0 ? persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0] : null;
 
-                    if (person) {
-                        const [x, y, w, h] = person.bbox;
+                    if (bestPerson) {
+                        const [x, y, w, h] = bestPerson.bbox;
                         const cx = x + w / 2;
                         const vWidth = videoRefVal.videoWidth || 1920;
                         const vHeight = videoRefVal.videoHeight || 1080;
@@ -428,7 +441,16 @@ function App() {
                         }
 
                         // update the trackingOffset so it will be used when AI loses tracking (e.g. only butt visible)
-                        trackingOffset = Math.max(-1, Math.min(1, normOffset));
+                        let rawOffset = Math.max(-1, Math.min(1, normOffset));
+
+                        // // 平滑过渡计算
+                        if (lastTrackedOffsetRef.current !== undefined) {
+                            trackingOffset = lastTrackedOffsetRef.current * 0.7 + rawOffset * 0.3;
+                        } else {
+                            trackingOffset = rawOffset;
+                        }
+
+                        lastTrackedOffsetRef.current = trackingOffset;
 
                         await captureFrame(trackingOffset);
                         didDetect = true;
