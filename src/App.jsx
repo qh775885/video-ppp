@@ -190,22 +190,25 @@ function App() {
                     // 获取当前锁定点（如果没锁定过，就取当前裁剪框中心）
                     const currentLockOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
 
-                    // 革命性升级：按照距心锁定距离（Spatial Lock-On）排序
+                    // 革命性升级重构：确保准确计算距心锁定距离（Spatial Lock-On）
                     bestPerson = persons.sort((a, b) => {
                         const cxA = a.bbox[0] + a.bbox[2] / 2;
-                        let offsetA = 0;
-                        if (maxOffset > 0) offsetA = (cxA - vWidth / 2) / maxOffset;
-                        const distA = Math.abs(Math.max(-1, Math.min(1, offsetA)) - currentLockOffset);
+                        // oA 是这个人体框若被居中，它的 offset 是多少（-1 到 1）
+                        let oA = 0;
+                        if (maxOffset > 0) oA = (cxA - vWidth / 2) / maxOffset;
+                        // 距离越小越好
+                        const distA = Math.abs(Math.max(-1, Math.min(1, oA)) - currentLockOffset);
 
                         const cxB = b.bbox[0] + b.bbox[2] / 2;
-                        let offsetB = 0;
-                        if (maxOffset > 0) offsetB = (cxB - vWidth / 2) / maxOffset;
-                        const distB = Math.abs(Math.max(-1, Math.min(1, offsetB)) - currentLockOffset);
+                        let oB = 0;
+                        if (maxOffset > 0) oB = (cxB - vWidth / 2) / maxOffset;
+                        const distB = Math.abs(Math.max(-1, Math.min(1, oB)) - currentLockOffset);
 
-                        // 距离差异 > 0.1 视为不同人选距离近的，距离极其贴合时才用面积兜底
+                        // 核心逻辑：距离差距很大时，谁离我当前锁定框近，就无条件选谁（距离大于 0.05 就算大差距，相当于偏移区间的 1/40）
                         const diff = distA - distB;
-                        if (Math.abs(diff) > 0.1) return diff;
+                        if (Math.abs(diff) > 0.05) return diff; // diff < 0 则 A 近，放前面
 
+                        // 只有两个人重叠、距离极近时，才拿面积出来比大小作为兜底
                         return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]); // 面积大的优先
                     })[0];
                 }
@@ -470,7 +473,8 @@ function App() {
                             const dB = Math.abs(Math.max(-1, Math.min(1, oB)) - currentLockOffset);
 
                             const diff = dA - dB;
-                            if (Math.abs(diff) > 0.1) return diff;
+                            // 阈值收紧到极敏级别 0.05
+                            if (Math.abs(diff) > 0.05) return diff;
                             return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]);
                         })[0];
                     }
