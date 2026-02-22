@@ -12,6 +12,11 @@ const formatTime = (seconds) => {
 };
 
 // Shell Layout
+const TRACKABLE_CLASSES = [
+    'person', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe',
+    'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat'
+];
+
 function App() {
     // --- Core Video State ---
     const [videoFile, setVideoFile] = useState(null);
@@ -201,10 +206,13 @@ function App() {
                 const targetWidth = vHeight * targetAspect;
                 const maxOffset = (vWidth - targetWidth) / 2;
 
+                // 统一扩大所有追踪范围基础库
+                const validClassesPrefix = ['person', 'dog', 'cat', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'car', 'truck', 'bus', 'train', 'motorcycle', 'airplane', 'bicycle', 'boat', 'chair', 'couch', 'bed'];
+
                 if (manualLockTargetRef.current !== null) {
-                    // ====== 模式 B：强干预全物种锁定模式 ======
-                    let targets = predictions.filter(p => p.class === 'person');
-                    if (targets.length === 0) targets = predictions; // 如果没匹配到人，完全开放给非人对象（例如床单、边角、错误识别），只要它在那儿！
+                    // ====== 模式 B：强干预雷达靶定模式 ======
+                    // 在手动模式下，我们对 COCO-SSD 的物体类型放宽，哪怕是识别到了床单或狗，只要它离锁定中心极近，我们也认！
+                    const targets = predictions.filter(p => validClassesPrefix.includes(p.class) || p.score > 0.05);
 
                     if (targets.length > 0) {
                         const expectedCenterPx = manualLockTargetRef.current * maxOffset + vWidth / 2;
@@ -213,11 +221,19 @@ function App() {
                             const cxB = b.bbox[0] + b.bbox[2] / 2;
                             const distA = Math.abs(cxA - expectedCenterPx);
                             const distB = Math.abs(cxB - expectedCenterPx);
-                            const diff = distA - distB;
-                            // 如果距离相差极小（50个物理像素以内），比较大小
-                            if (Math.abs(diff) > 50) return diff;
-                            return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]);
+
+                            // ====== 最关键逻辑：只有距离这一个唯一标准！绝对不看它的画幅大小 ======
+                            return distA - distB;
                         })[0];
+
+                        // 如果连最近的物体，都偏离了目标区域超过 300 像素，证明那个物体消失了（画面大换场或它被挡住了）。
+                        // 此时绝不能跑去跟踪其他偏远物体！我们把 bestTarget 设为 null，让视野定格在原地等它回来！
+                        if (bestTarget) {
+                            const cxBest = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
+                            if (Math.abs(cxBest - expectedCenterPx) > 300) {
+                                bestTarget = null; // 丢失视野，定格原地
+                            }
+                        }
                     }
                 } else {
                     // ====== 模式 A：默认严谨人物跟踪模式 ======
@@ -235,15 +251,9 @@ function App() {
                     let safeOffset = Math.max(-1, Math.min(1, normOffset));
 
                     if (manualLockTargetRef.current !== null) {
-                        // 防暴墙：锁定模式下严禁跨度超过0.5半屏的跳跃（假人现象）
-                        const jumpDist = Math.abs(safeOffset - manualLockTargetRef.current);
-                        if (jumpDist > 0.5) {
-                            safeOffset = manualLockTargetRef.current; // 太远了！直接无视本次识别，按在原地！
-                        } else {
-                            // 正常的连续跟踪，丝滑混合推进锁定目标心
-                            safeOffset = manualLockTargetRef.current * 0.7 + safeOffset * 0.3;
-                            manualLockTargetRef.current = safeOffset;
-                        }
+                        // 正常的连续跟踪，丝滑混合推进锁定目标心
+                        safeOffset = manualLockTargetRef.current * 0.7 + safeOffset * 0.3;
+                        manualLockTargetRef.current = safeOffset;
                     } else {
                         // 自动追踪模式的惯性过滤
                         if (lastTrackedOffsetRef.current !== undefined) {
@@ -471,19 +481,25 @@ function App() {
                     const targetWidth = vHeight * targetAspect;
                     const maxOffset = (vWidth - targetWidth) / 2;
 
+                    const validClassesPrefix = ['person', 'dog', 'cat', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'car', 'truck', 'bus', 'train', 'motorcycle', 'airplane', 'bicycle', 'boat', 'chair', 'couch', 'bed'];
+
                     if (manualLockTargetRef.current !== null) {
-                        let targets = predictions.filter(p => p.class === 'person');
-                        if (targets.length === 0) targets = predictions;
+                        const targets = predictions.filter(p => validClassesPrefix.includes(p.class) || p.score > 0.05);
 
                         if (targets.length > 0) {
                             const expectedCenterPx = manualLockTargetRef.current * maxOffset + vWidth / 2;
                             bestTarget = targets.sort((a, b) => {
                                 const distA = Math.abs((a.bbox[0] + a.bbox[2] / 2) - expectedCenterPx);
                                 const distB = Math.abs((b.bbox[0] + b.bbox[2] / 2) - expectedCenterPx);
-                                const diff = distA - distB;
-                                if (Math.abs(diff) > 50) return diff;
-                                return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]);
+                                return distA - distB;
                             })[0];
+
+                            if (bestTarget) {
+                                const cxBest = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
+                                if (Math.abs(cxBest - expectedCenterPx) > 300) {
+                                    bestTarget = null;
+                                }
+                            }
                         }
                     } else {
                         const persons = predictions.filter(p => p.class === 'person');
@@ -499,13 +515,8 @@ function App() {
                         let rawOffset = Math.max(-1, Math.min(1, normOffset));
 
                         if (manualLockTargetRef.current !== null) {
-                            const jumpDist = Math.abs(rawOffset - manualLockTargetRef.current);
-                            if (jumpDist > 0.5) {
-                                rawOffset = manualLockTargetRef.current;
-                            } else {
-                                rawOffset = manualLockTargetRef.current * 0.7 + rawOffset * 0.3;
-                                manualLockTargetRef.current = rawOffset;
-                            }
+                            rawOffset = manualLockTargetRef.current * 0.7 + rawOffset * 0.3;
+                            manualLockTargetRef.current = rawOffset;
                         } else {
                             if (lastTrackedOffsetRef.current !== undefined) {
                                 rawOffset = lastTrackedOffsetRef.current * 0.7 + rawOffset * 0.3;
