@@ -176,10 +176,13 @@ function App() {
             try {
                 // 【视觉大模型级强化】极限阈值 0.05，宁杀错不放过。用于哪怕只有背部/臀部/局部手臂等高难度局部侦测
                 const predictions = await aiModel.detect(videoRefVal, 30, 0.05);
-                const persons = predictions.filter(p => p.class === 'person');
+                // 开启“无差别万物追踪”后门
+                // 先尝试找人，但也把所有识别到的非人轮廓（如模型误把背影认作狗或床铺）圈进来作为备用标靶！
+                let targets = predictions.filter(p => p.class === 'person');
+                if (targets.length === 0) targets = predictions; // 没有人？全面开放拦截！
 
-                let bestPerson = null;
-                if (persons.length > 0) {
+                let bestTarget = null;
+                if (targets.length > 0) {
                     const vWidth = videoRefVal.videoWidth || 1920;
                     const vHeight = videoRefVal.videoHeight || 1080;
                     const ratioParts = portraitRatio.split(':');
@@ -191,12 +194,10 @@ function App() {
                     const currentLockOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
 
                     // 革命性升级重构：确保准确计算距心锁定距离（Spatial Lock-On）
-                    bestPerson = persons.sort((a, b) => {
+                    bestTarget = targets.sort((a, b) => {
                         const cxA = a.bbox[0] + a.bbox[2] / 2;
-                        // oA 是这个人体框若被居中，它的 offset 是多少（-1 到 1）
                         let oA = 0;
                         if (maxOffset > 0) oA = (cxA - vWidth / 2) / maxOffset;
-                        // 距离越小越好
                         const distA = Math.abs(Math.max(-1, Math.min(1, oA)) - currentLockOffset);
 
                         const cxB = b.bbox[0] + b.bbox[2] / 2;
@@ -204,17 +205,15 @@ function App() {
                         if (maxOffset > 0) oB = (cxB - vWidth / 2) / maxOffset;
                         const distB = Math.abs(Math.max(-1, Math.min(1, oB)) - currentLockOffset);
 
-                        // 核心逻辑：距离差距很大时，谁离我当前锁定框近，就无条件选谁（距离大于 0.05 就算大差距，相当于偏移区间的 1/40）
                         const diff = distA - distB;
-                        if (Math.abs(diff) > 0.05) return diff; // diff < 0 则 A 近，放前面
+                        if (Math.abs(diff) > 0.05) return diff;
 
-                        // 只有两个人重叠、距离极近时，才拿面积出来比大小作为兜底
                         return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]); // 面积大的优先
                     })[0];
                 }
 
-                if (bestPerson) {
-                    const [x, y, w, h] = bestPerson.bbox;
+                if (bestTarget) {
+                    const [x, y, w, h] = bestTarget.bbox;
                     const cx = x + w / 2;
                     const vWidth = videoRefVal.videoWidth || 1920;
                     const vHeight = videoRefVal.videoHeight || 1080;
@@ -230,6 +229,15 @@ function App() {
                     }
 
                     let safeOffset = Math.max(-1, Math.min(1, normOffset));
+
+                    // 【防暴走隔离屏障】：如果这个发现的目标距离我们最后手动锁定的位置非常远（>0.4偏移量，约半屏），
+                    // 并且我们处于手动追踪模式，那么它是假人的概率极高（真正的背影被隐藏，模型看到了边角处的画作）。绝对不跟过去！
+                    if (lastTrackedOffsetRef.current !== undefined) {
+                        const jumpDist = Math.abs(safeOffset - lastTrackedOffsetRef.current);
+                        if (jumpDist > 0.4) {
+                            throw new Error("Target too far, ignored to protect lock-on state."); // 抛出错误跳过本次位移更新！
+                        }
+                    }
 
                     // 【惯性滤波】为了对抗极低阈值带来的画面乱闪干扰，我们引入 30%新 + 70%老的黄油般丝滑混合过渡
                     if (lastTrackedOffsetRef.current !== undefined) {
@@ -452,9 +460,11 @@ function App() {
                 try {
                     // 同理，批量截图中也下放到底层阈值 0.05
                     const predictions = await aiModel.detect(videoRefVal, 30, 0.05);
-                    const persons = predictions.filter(p => p.class === 'person');
-                    let bestPerson = null;
-                    if (persons.length > 0) {
+                    let targets = predictions.filter(p => p.class === 'person');
+                    if (targets.length === 0) targets = predictions; // 开放拦截！
+
+                    let bestTarget = null;
+                    if (targets.length > 0) {
                         const vWidth = videoRefVal.videoWidth || 1920;
                         const vHeight = videoRefVal.videoHeight || 1080;
                         const ratioParts = portraitRatio.split(':');
@@ -463,7 +473,7 @@ function App() {
                         const maxOffset = (vWidth - targetWidth) / 2;
                         const currentLockOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
 
-                        bestPerson = persons.sort((a, b) => {
+                        bestTarget = targets.sort((a, b) => {
                             const cxA = a.bbox[0] + a.bbox[2] / 2;
                             let oA = 0; if (maxOffset > 0) oA = (cxA - vWidth / 2) / maxOffset;
                             const dA = Math.abs(Math.max(-1, Math.min(1, oA)) - currentLockOffset);
@@ -479,8 +489,8 @@ function App() {
                         })[0];
                     }
 
-                    if (bestPerson) {
-                        const [x, y, w, h] = bestPerson.bbox;
+                    if (bestTarget) {
+                        const [x, y, w, h] = bestTarget.bbox;
                         const cx = x + w / 2;
                         const vWidth = videoRefVal.videoWidth || 1920;
                         const vHeight = videoRefVal.videoHeight || 1080;
@@ -497,6 +507,12 @@ function App() {
 
                         // update the trackingOffset so it will be used when AI loses tracking (e.g. only butt visible)
                         let rawOffset = Math.max(-1, Math.min(1, normOffset));
+
+                        // 【防暴走拦截】
+                        if (lastTrackedOffsetRef.current !== undefined) {
+                            const jumpDist = Math.abs(rawOffset - lastTrackedOffsetRef.current);
+                            if (jumpDist > 0.4) throw new Error("Batch Extract target too far.");
+                        }
 
                         // // 平滑过渡计算
                         if (lastTrackedOffsetRef.current !== undefined) {
