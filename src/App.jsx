@@ -191,22 +191,21 @@ function App() {
                     const maxOffset = (vWidth - targetWidth) / 2;
 
                     // 获取当前锁定点（如果没锁定过，就取当前裁剪框中心）
+                    // 获取当前锁定点对应的物理中心 X 坐标绝对值
                     const currentLockOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+                    const expectedTargetCenterX = currentLockOffset * maxOffset + vWidth / 2;
 
-                    // 革命性升级重构：确保准确计算距心锁定距离（Spatial Lock-On）
+                    // 革命性升级重构：确保准确计算距心锁定距离（Spatial Lock-On）直接在物理像素层面对比
                     bestTarget = targets.sort((a, b) => {
                         const cxA = a.bbox[0] + a.bbox[2] / 2;
-                        let oA = 0;
-                        if (maxOffset > 0) oA = (cxA - vWidth / 2) / maxOffset;
-                        const distA = Math.abs(Math.max(-1, Math.min(1, oA)) - currentLockOffset);
+                        const distA = Math.abs(cxA - expectedTargetCenterX);
 
                         const cxB = b.bbox[0] + b.bbox[2] / 2;
-                        let oB = 0;
-                        if (maxOffset > 0) oB = (cxB - vWidth / 2) / maxOffset;
-                        const distB = Math.abs(Math.max(-1, Math.min(1, oB)) - currentLockOffset);
+                        const distB = Math.abs(cxB - expectedTargetCenterX);
 
                         const diff = distA - distB;
-                        if (Math.abs(diff) > 0.05) return diff;
+                        // 阈值设为绝对像素 50px（画面宽度的极小一部分）
+                        if (Math.abs(diff) > 50) return diff;
 
                         return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]); // 面积大的优先
                     })[0];
@@ -230,11 +229,10 @@ function App() {
 
                     let safeOffset = Math.max(-1, Math.min(1, normOffset));
 
-                    // 【防暴走隔离屏障】：如果这个发现的目标距离我们最后手动锁定的位置非常远（>0.4偏移量，约半屏），
-                    // 并且我们处于手动追踪模式，那么它是假人的概率极高（真正的背影被隐藏，模型看到了边角处的画作）。绝对不跟过去！
+                    // 【防暴走隔离屏障】：放宽跳跃限制到 0.5 防止误杀
                     if (lastTrackedOffsetRef.current !== undefined) {
                         const jumpDist = Math.abs(safeOffset - lastTrackedOffsetRef.current);
-                        if (jumpDist > 0.4) {
+                        if (jumpDist > 0.5) {
                             throw new Error("Target too far, ignored to protect lock-on state."); // 抛出错误跳过本次位移更新！
                         }
                     }
@@ -472,19 +470,17 @@ function App() {
                         const targetWidth = vHeight * targetAspect;
                         const maxOffset = (vWidth - targetWidth) / 2;
                         const currentLockOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+                        const expectedTargetCenterX = currentLockOffset * maxOffset + vWidth / 2;
 
                         bestTarget = targets.sort((a, b) => {
                             const cxA = a.bbox[0] + a.bbox[2] / 2;
-                            let oA = 0; if (maxOffset > 0) oA = (cxA - vWidth / 2) / maxOffset;
-                            const dA = Math.abs(Math.max(-1, Math.min(1, oA)) - currentLockOffset);
+                            const dA = Math.abs(cxA - expectedTargetCenterX);
 
                             const cxB = b.bbox[0] + b.bbox[2] / 2;
-                            let oB = 0; if (maxOffset > 0) oB = (cxB - vWidth / 2) / maxOffset;
-                            const dB = Math.abs(Math.max(-1, Math.min(1, oB)) - currentLockOffset);
+                            const dB = Math.abs(cxB - expectedTargetCenterX);
 
                             const diff = dA - dB;
-                            // 阈值收紧到极敏级别 0.05
-                            if (Math.abs(diff) > 0.05) return diff;
+                            if (Math.abs(diff) > 50) return diff;
                             return (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]);
                         })[0];
                     }
