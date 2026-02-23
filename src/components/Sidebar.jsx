@@ -9,11 +9,11 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
 
     // --- Lightbox Logic ---
     const handleNext = useCallback(() => {
-        setPreviewIndex(prev => (prev + 1) % frames.length);
+        setPreviewIndex(prev => Math.min(prev + 1, frames.length - 1));
     }, [frames.length]);
 
     const handlePrev = useCallback(() => {
-        setPreviewIndex(prev => (prev - 1 + frames.length) % frames.length);
+        setPreviewIndex(prev => Math.max(prev - 1, 0));
     }, [frames.length]);
 
     // Keyboard & Wheel Events for Lightbox
@@ -210,8 +210,10 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                         />
 
                         {/* Info Badge */}
-                        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 bg-zinc-900/80 backdrop-blur rounded-full border border-white/10 flex items-center gap-3 shadow-xl">
-                            <span className="text-xs font-mono text-indigo-300 font-bold">#{previewIndex + 1} / {frames.length}</span>
+                        <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 backdrop-blur rounded-full border flex items-center gap-3 shadow-xl transition-all duration-300 ${previewIndex === frames.length - 1 ? 'bg-amber-900/80 border-amber-500/30' : previewIndex === 0 ? 'bg-indigo-900/60 border-indigo-500/30' : 'bg-zinc-900/80 border-white/10'}`}>
+                            <span className={`text-xs font-mono font-bold ${previewIndex === frames.length - 1 ? 'text-amber-300' : 'text-indigo-300'}`}>#{previewIndex + 1} / {frames.length}</span>
+                            {previewIndex === frames.length - 1 && <span className="text-xs font-bold text-amber-400">已是最后一张</span>}
+                            {previewIndex === 0 && frames.length > 1 && <span className="text-xs font-bold text-indigo-300">第一张</span>}
                             <div className="w-px h-3 bg-white/20"></div>
                             <span className="text-xs font-mono text-zinc-300">{new Date(currentFrame.time * 1000).toISOString().substr(11, 8)}</span>
                         </div>

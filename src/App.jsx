@@ -11,6 +11,75 @@ const formatTime = (seconds) => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')} `;
 };
 
+// ====== v2.0.9 智能推荐张数：平方根缩放 ======
+const getRecommendedCount = (durationSec) => {
+    if (!durationSec || durationSec <= 0) return 10;
+    return Math.min(48, Math.max(6, Math.round(Math.sqrt(durationSec) * 3)));
+};
+
+// ====== 清晰度评分：Laplacian 方差（值越高越清晰） ======
+const computeSharpness = (canvas) => {
+    // 160px 宽度快速计算，清晰度过滤已证明有效，速度优先
+    const scale = Math.min(1, 160 / canvas.width);
+    const w = Math.round(canvas.width * scale);
+    const h = Math.round(canvas.height * scale);
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = w;
+    tmpCanvas.height = h;
+    const tmpCtx = tmpCanvas.getContext('2d', { willReadFrequently: true });
+    tmpCtx.drawImage(canvas, 0, 0, w, h);
+    const imgData = tmpCtx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    const gray = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+        const idx = i * 4;
+        gray[i] = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114;
+    }
+    let sum = 0, count = 0;
+    for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+            const lap = -4 * gray[y * w + x]
+                + gray[(y - 1) * w + x]
+                + gray[(y + 1) * w + x]
+                + gray[y * w + (x - 1)]
+                + gray[y * w + (x + 1)];
+            sum += lap * lap;
+            count++;
+        }
+    }
+    return count > 0 ? sum / count : 0;
+};
+
+// ====== 感知哈希 dHash：捕捉图像结构，不受位置平移影响 ======
+const computeDHash = (canvas) => {
+    const w = 17, h = 16; // 17宽取16个水平梯度差
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const ctx = tmp.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const hash = new Uint8Array(256); // 16×16 = 256 bits
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w - 1; x++) {
+            const i1 = (y * w + x) * 4;
+            const i2 = (y * w + x + 1) * 4;
+            const g1 = data[i1] * 0.299 + data[i1 + 1] * 0.587 + data[i1 + 2] * 0.114;
+            const g2 = data[i2] * 0.299 + data[i2 + 1] * 0.587 + data[i2 + 2] * 0.114;
+            hash[y * 16 + x] = g1 > g2 ? 1 : 0;
+        }
+    }
+    return hash;
+};
+
+// ====== Hamming 距离：两个哈希有多少位不同（越大越不同） ======
+const hashDistance = (a, b) => {
+    let dist = 0;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) dist++;
+    }
+    return dist;
+};
+
 // Shell Layout
 const TRACKABLE_CLASSES = [
     'person', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe',
@@ -40,6 +109,8 @@ function App() {
     const [multiplier, setMultiplier] = useState(1); // Density: frames per second
     const [targetCount, setTargetCount] = useState(12);
     const [isExtracting, setIsExtracting] = useState(false);
+    const [extractElapsed, setExtractElapsed] = useState(0); // 提取用时（秒）
+    const extractTimerRef = useRef(null);
 
     // --- New AI / Advanced State ---
     const [isVideoLoading, setIsVideoLoading] = useState(false);
@@ -78,12 +149,13 @@ function App() {
         setAutoTrack(!autoTrack);
     };
 
-    // Sync end range when duration loads
+    // Sync end range when duration loads — 使用智能推荐张数
     useEffect(() => {
         if (duration > 0 && rangeEnd === 0) {
             setRangeEnd(duration);
-            // Auto calc count based on initial multiplier 1
-            setTargetCount(Math.max(1, Math.round(duration * 1)));
+            const recommended = getRecommendedCount(duration);
+            setTargetCount(recommended);
+            setMultiplier(parseFloat((recommended / duration).toFixed(1)) || 1);
         }
     }, [duration]);
 
@@ -463,56 +535,196 @@ function App() {
         });
     };
 
-    // --- Batch Extraction (Smart Distributed with Range) ---
+    // ====== v2.0.9 直接复用 Canvas 保存帧（跳过 re-seek） ======
+    const saveCanvasAsFrame = async (canvas, time) => {
+        return new Promise((resolve) => {
+            canvas.toBlob(async (blob) => {
+                if (!blob) { resolve(); return; }
+                const url = URL.createObjectURL(blob);
+                const newFrame = {
+                    id: Date.now() + Math.random(),
+                    url, time, blob,
+                    isPortrait: !!portraitRatio,
+                    ratio: portraitRatio || "16:9",
+                    filePath: null
+                };
+                if (cacheDir && videoFile) {
+                    try {
+                        const fs = window.require('fs');
+                        const path = window.require('path');
+                        const sanitize = (name) => {
+                            const nameNoExt = name.substring(0, name.lastIndexOf('.')) || name;
+                            return nameNoExt.replace(/[<>:"/\\|?*]/g, '').replace(/[\s.]+$/g, '').trim();
+                        };
+                        const targetDir = path.join(cacheDir, sanitize(videoFile.name));
+                        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+                        const buffer = Buffer.from(await blob.arrayBuffer());
+                        const m = Math.floor(time / 60).toString().padStart(2, '0');
+                        const s = Math.floor(time % 60).toString().padStart(2, '0');
+                        const ms = Math.floor((time % 1) * 1000).toString().padStart(3, '0');
+                        const fullPath = path.join(targetDir, `frame_${m}${s}_${ms}.jpg`);
+                        fs.writeFileSync(fullPath, buffer);
+                        newFrame.filePath = fullPath;
+                    } catch (err) { console.error("Auto-save failed:", err); }
+                }
+                setFrames(prev => [...prev, newFrame]);
+                resolve();
+            }, 'image/jpeg', 0.95);
+        });
+    };
+
+    // ====== v2.0.9 智能提取：极致速度版 ======
     const handleSmartExtract = async () => {
         if (!videoRefVal || isExtracting) return;
         setIsExtracting(true);
+        setExtractElapsed(0);
+        const extractStartTime = Date.now();
+        extractTimerRef.current = setInterval(() => {
+            setExtractElapsed(Math.round((Date.now() - extractStartTime) / 1000));
+        }, 500);
 
         const effectiveStart = rangeStart;
         const effectiveEnd = (rangeEnd > 0) ? rangeEnd : duration;
         const activeDuration = effectiveEnd - effectiveStart;
 
         if (activeDuration <= 0.5) {
+            if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
             setIsExtracting(false);
             return;
         }
 
-        const interval = (targetCount > 1) ? activeDuration / (targetCount - 1) : 0;
+        // ====== Phase 1: 采样（总量封顶 96，无论视频多长） ======
+        const candidateCount = Math.min(96, Math.max(24, Math.round(activeDuration * 1)));
+        const sampleInterval = activeDuration / candidateCount;
         let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
 
-        for (let i = 0; i < targetCount; i++) {
-            const timeToCapture = effectiveStart + (i * interval);
+        const candidates = [];
+
+        for (let i = 0; i < candidateCount; i++) {
+            const timeToCapture = effectiveStart + (i * sampleInterval);
             if (timeToCapture > effectiveEnd) break;
 
             videoRefVal.currentTime = timeToCapture;
             setCurrentTime(timeToCapture);
-
-            // ====== 用 seeked 事件确认帧已解码就绪，替代盲等 450ms ======
-            await waitForSeeked(videoRefVal, 800);
-            // 额外等一帧渲染，确保画面已绘制
+            await waitForSeeked(videoRefVal, 400); // 400ms 超时，大部分 seek < 100ms
             await new Promise(r => requestAnimationFrame(r));
 
-            let didDetect = false;
-
-            // 复用通用 AI 检测逻辑
+            // AI 检测偏移
+            let frameOffset = autoTrack ? trackingOffset : cropOffset;
             if (autoTrack && aiModel && portraitRatio) {
                 try {
                     const result = await runAiDetection(videoRefVal, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
                     if (result !== null) {
                         trackingOffset = result;
-                        await captureFrame(trackingOffset);
-                        didDetect = true;
+                        frameOffset = result;
                     }
                 } catch (err) {
-                    console.error("Batch AI detect failed:", err);
+                    console.error("Smart extract AI detect failed:", err);
                 }
             }
 
-            if (!didDetect) {
-                await captureFrame(autoTrack ? trackingOffset : cropOffset);
+            // 截取候选帧到 Canvas
+            const vWidth = videoRefVal.videoWidth;
+            const vHeight = videoRefVal.videoHeight;
+            let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
+
+            if (portraitRatio) {
+                const ratioParts = portraitRatio.split(':');
+                const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                const targetWidth = vHeight * targetAspect;
+                if (targetWidth <= vWidth) {
+                    sWidth = targetWidth;
+                    const maxOff = (vWidth - sWidth) / 2;
+                    sx = (vWidth - sWidth) / 2 + frameOffset * maxOff;
+                } else {
+                    sHeight = vWidth / targetAspect;
+                    sy = (vHeight - sHeight) / 2;
+                }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = sWidth;
+            canvas.height = sHeight;
+            canvas.getContext('2d').drawImage(videoRefVal, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+
+            const sharpness = computeSharpness(canvas);
+            const hash = computeDHash(canvas);
+            candidates.push({ time: timeToCapture, canvas, sharpness, hash, offset: frameOffset });
+        }
+
+        if (candidates.length === 0) {
+            if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
+            setIsExtracting(false);
+            return;
+        }
+
+        // ====== Phase 2: 时间分段 + 清晰度选帧 ======
+        const segmentCount = Math.min(targetCount, Math.max(6, Math.round(activeDuration / 2)));
+        const segmentDuration = activeDuration / segmentCount;
+        const segmentBest = [];
+
+        for (let seg = 0; seg < segmentCount; seg++) {
+            const segStart = effectiveStart + seg * segmentDuration;
+            const segEnd = segStart + segmentDuration;
+            const segFrames = candidates.filter(c => c.time >= segStart && c.time < segEnd);
+            if (segFrames.length > 0) {
+                segFrames.sort((a, b) => b.sharpness - a.sharpness);
+                segmentBest.push(segFrames[0]);
             }
         }
 
+        // ====== Phase 3: 哈希去重 ======
+        const HASH_SIMILAR = 25;
+        const deduplicated = [segmentBest[0]];
+        for (let i = 1; i < segmentBest.length; i++) {
+            let isDuplicate = false;
+            for (const selected of deduplicated) {
+                if (hashDistance(segmentBest[i].hash, selected.hash) < HASH_SIMILAR) {
+                    if (segmentBest[i].sharpness > selected.sharpness) {
+                        deduplicated[deduplicated.indexOf(selected)] = segmentBest[i];
+                    }
+                    isDuplicate = true;
+                    break;
+                }
+            }
+            if (!isDuplicate) {
+                deduplicated.push(segmentBest[i]);
+            }
+        }
+
+        // ====== Phase 4: 补充多样化帧 ======
+        if (deduplicated.length < targetCount) {
+            const sharpnessValues = candidates.map(c => c.sharpness).sort((a, b) => a - b);
+            const medianSharpness = sharpnessValues[Math.floor(sharpnessValues.length / 2)];
+            const remaining = candidates
+                .filter(c => !deduplicated.includes(c) && c.sharpness >= medianSharpness)
+                .sort((a, b) => {
+                    const minDistA = Math.min(...deduplicated.map(s => hashDistance(a.hash, s.hash)));
+                    const minDistB = Math.min(...deduplicated.map(s => hashDistance(b.hash, s.hash)));
+                    return minDistB - minDistA;
+                });
+            for (const candidate of remaining) {
+                if (deduplicated.length >= targetCount) break;
+                const minDist = Math.min(...deduplicated.map(s => hashDistance(candidate.hash, s.hash)));
+                if (minDist >= HASH_SIMILAR) {
+                    deduplicated.push(candidate);
+                }
+            }
+        }
+
+        // ====== Phase 5: 上限裁剪 + 直接复用 Canvas 输出（零 re-seek） ======
+        let finalFrames = deduplicated;
+        if (finalFrames.length > targetCount && targetCount > 0) {
+            finalFrames = [...finalFrames].sort((a, b) => b.sharpness - a.sharpness).slice(0, targetCount);
+        }
+        finalFrames.sort((a, b) => a.time - b.time);
+
+        for (const frame of finalFrames) {
+            await saveCanvasAsFrame(frame.canvas, frame.time);
+        }
+
+        if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
+        setExtractElapsed(Math.round((Date.now() - extractStartTime) / 1000));
         setIsExtracting(false);
     };
 
@@ -703,6 +915,7 @@ function App() {
                             multiplier={multiplier}
                             onMultiplierChange={handleMultiplierChange}
                             isExtracting={isExtracting}
+                            extractElapsed={extractElapsed}
                             onExtract={handleSmartExtract}
                         />
                     </div>
@@ -732,7 +945,7 @@ function FloatingCockpit({
     autoTrack, onToggleAutoTrack, aiModelReady, isAiLoading,
     targetCount, onTargetCountChange,
     multiplier, onMultiplierChange,
-    isExtracting, onExtract
+    isExtracting, extractElapsed, onExtract
 }) {
     // Local State for Range Mode Toggle
     // We lift this up if App needs to know, but for UI visibility, local is fine.
@@ -1000,9 +1213,9 @@ function FloatingCockpit({
                 {/* Right: Extraction Panel */}
                 <div className="flex items-center h-[48px] px-1 rounded-xl bg-[#0a0a0b]/80 border border-white/10 shadow-2xl backdrop-blur-xl ring-1 ring-white/5 mx-0">
 
-                    {/* 1. Left: Count (Ratio: ~1) */}
+                    {/* 1. Left: Max Count (Upper Limit) */}
                     <div className="flex flex-col items-center justify-center w-[44px]">
-                        <span className="text-[9px] text-zinc-500 font-medium select-none tracking-tight leading-none mb-0.5">张数</span>
+                        <span className="text-[9px] text-zinc-500 font-medium select-none tracking-tight leading-none mb-0.5">≤上限</span>
                         <input
                             type="number"
                             value={targetCount}
@@ -1042,48 +1255,10 @@ function FloatingCockpit({
                     {/* Divider */}
                     <div className="w-px h-5 bg-white/5"></div>
 
-                    {/* 3. Right: Meta Info (Ratio: ~1) */}
-                    <div className="flex flex-col items-center justify-center w-[44px] gap-0.5">
-
-                        {/* Duration */}
-                        <div className="text-[10px] font-mono font-bold text-indigo-300 leading-none">
-                            {Math.floor(extractDuration)}s
-                        </div>
-
-                        {/* Divider Line */}
-                        <div className="w-5 h-px bg-white/10 my-0.5"></div>
-
-                        {/* Multiplier */}
-                        <div className="relative group/mult flex flex-col items-center w-full">
-                            <div className="text-[9px] font-bold text-zinc-400 group-hover/mult:text-zinc-200 transition-colors cursor-pointer flex items-center justify-center gap-0.5 w-full">
-                                <span className="opacity-50">×</span>
-                                <span>{multiplier}</span>
-                            </div>
-
-                            {/* Dropdown Menu (Upwards) */}
-                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 invisible group-hover/mult:opacity-100 group-hover/mult:visible transition-all duration-200 z-50">
-                                <div className="bg-[#18181b]/95 backdrop-blur-xl border border-white/10 rounded-xl p-2 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] grid grid-cols-3 gap-1 w-[90px]">
-                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-                                        <button
-                                            key={num}
-                                            onClick={(e) => { e.stopPropagation(); onMultiplierChange(num); }}
-                                            className={`h-6 w-full rounded-md flex items-center justify-center text-[10px] font-bold font-mono transition-all ${multiplier === num
-                                                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
-                                                : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-white'
-                                                }`}
-                                        >
-                                            {num}
-                                        </button>
-                                    ))}
-                                    <input
-                                        type="number"
-                                        className="col-span-3 h-5 bg-black/20 rounded-md text-center text-[9px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 mt-1 placeholder-zinc-600 border border-white/5 focus:border-indigo-500/30 transition-all"
-                                        placeholder="自定义"
-                                        value={multiplier}
-                                        onChange={(e) => onMultiplierChange(parseFloat(e.target.value) || 1)}
-                                    />
-                                </div>
-                            </div>
+                    {/* 3. Right: Duration / Elapsed Timer */}
+                    <div className="flex items-center justify-center w-[40px]">
+                        <div className={`text-[10px] font-mono font-bold leading-none transition-colors ${isExtracting ? 'text-amber-400 animate-pulse' : extractElapsed > 0 ? 'text-emerald-400' : 'text-indigo-300'}`}>
+                            {isExtracting ? `${extractElapsed}s` : extractElapsed > 0 ? `${extractElapsed}s` : `${Math.floor(extractDuration)}s`}
                         </div>
                     </div>
                 </div>
