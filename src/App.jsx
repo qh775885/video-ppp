@@ -185,6 +185,78 @@ function App() {
         setIsPlaying(!isPlaying);
     };
 
+    // ====== 通用 AI 检测核心逻辑（复用于 onTimeUpdate 和批量提取） ======
+    const runAiDetection = async (video, model, ratio, lockRef, lastOffRef) => {
+        const threshold = lockRef.current !== null ? 0.05 : 0.45;
+        const predictions = await model.detect(video, 30, threshold);
+
+        let bestTarget = null;
+        const vWidth = video.videoWidth || 1920;
+        const vHeight = video.videoHeight || 1080;
+        const ratioParts = ratio.split(':');
+        const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+        const targetWidth = vHeight * targetAspect;
+        const maxOffset = (vWidth - targetWidth) / 2;
+
+        const validClassesPrefix = ['person', 'dog', 'cat', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'car', 'truck', 'bus', 'train', 'motorcycle', 'airplane', 'bicycle', 'boat', 'chair', 'couch', 'bed'];
+
+        if (lockRef.current !== null) {
+            const targets = predictions.filter(p => validClassesPrefix.includes(p.class) || p.score > 0.05);
+            if (targets.length > 0) {
+                const expectedCenterPx = lockRef.current * maxOffset + vWidth / 2;
+                bestTarget = targets.sort((a, b) => {
+                    const distA = Math.abs((a.bbox[0] + a.bbox[2] / 2) - expectedCenterPx);
+                    const distB = Math.abs((b.bbox[0] + b.bbox[2] / 2) - expectedCenterPx);
+                    return distA - distB;
+                })[0];
+                if (bestTarget) {
+                    const cxBest = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
+                    if (Math.abs(cxBest - expectedCenterPx) > 300) {
+                        bestTarget = null;
+                    }
+                }
+            }
+        } else {
+            const persons = predictions.filter(p => p.class === 'person');
+            if (persons.length > 0) {
+                bestTarget = persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0];
+            }
+        }
+
+        if (bestTarget) {
+            const cx = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
+            let normOffset = 0;
+            if (maxOffset > 0) normOffset = (cx - vWidth / 2) / maxOffset;
+            let rawOffset = Math.max(-1, Math.min(1, normOffset));
+
+            // ====== 自适应惯性：位移越大 → 新值权重越高，跟踪越快 ======
+            const prevOffset = lockRef.current !== null ? lockRef.current : (lastOffRef.current ?? 0);
+            const delta = Math.abs(rawOffset - prevOffset);
+            // delta=0 → inertia=0.8（丝滑），delta=1 → inertia=0.2（快速跟上）
+            const inertia = Math.max(0.15, 0.8 - delta * 0.65);
+            let safeOffset = prevOffset * inertia + rawOffset * (1 - inertia);
+            safeOffset = Math.max(-1, Math.min(1, safeOffset));
+
+            if (lockRef.current !== null) {
+                lockRef.current = safeOffset;
+            }
+            lastOffRef.current = safeOffset;
+            return safeOffset;
+        }
+        return null; // 未检测到目标
+    };
+
+    // ====== 等待视频帧解码就绪的工具函数 ======
+    const waitForSeeked = (video, timeoutMs = 800) => {
+        return new Promise(resolve => {
+            // 如果 video.readyState >= 2 且 currentTime 已经在目标时间附近，直接 resolve
+            let resolved = false;
+            const done = () => { if (!resolved) { resolved = true; resolve(); } };
+            video.addEventListener('seeked', done, { once: true });
+            setTimeout(done, timeoutMs); // 超时兜底
+        });
+    };
+
     const onTimeUpdate = async (e) => {
         const time = e.target.currentTime;
         setCurrentTime(time);
@@ -193,81 +265,16 @@ function App() {
         if (autoTrack && aiModel && portraitRatio && videoRefVal && !isDetectingRef.current) {
             isDetectingRef.current = true;
             try {
-                // 如果开启了手动锁定，下探检测阈值以锁定背影/臀部等微小特征，不再局限于 person，允许所有特征
-                // 默认模式则使用 0.45 严谨阈值，防止把床被认错为人
-                const threshold = manualLockTargetRef.current !== null ? 0.05 : 0.45;
-                const predictions = await aiModel.detect(videoRefVal, 30, threshold);
-
-                let bestTarget = null;
-                const vWidth = videoRefVal.videoWidth || 1920;
-                const vHeight = videoRefVal.videoHeight || 1080;
-                const ratioParts = portraitRatio.split(':');
-                const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-                const targetWidth = vHeight * targetAspect;
-                const maxOffset = (vWidth - targetWidth) / 2;
-
-                // 统一扩大所有追踪范围基础库
-                const validClassesPrefix = ['person', 'dog', 'cat', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'car', 'truck', 'bus', 'train', 'motorcycle', 'airplane', 'bicycle', 'boat', 'chair', 'couch', 'bed'];
-
-                if (manualLockTargetRef.current !== null) {
-                    // ====== 模式 B：强干预雷达靶定模式 ======
-                    // 在手动模式下，我们对 COCO-SSD 的物体类型放宽，哪怕是识别到了床单或狗，只要它离锁定中心极近，我们也认！
-                    const targets = predictions.filter(p => validClassesPrefix.includes(p.class) || p.score > 0.05);
-
-                    if (targets.length > 0) {
-                        const expectedCenterPx = manualLockTargetRef.current * maxOffset + vWidth / 2;
-                        bestTarget = targets.sort((a, b) => {
-                            const cxA = a.bbox[0] + a.bbox[2] / 2;
-                            const cxB = b.bbox[0] + b.bbox[2] / 2;
-                            const distA = Math.abs(cxA - expectedCenterPx);
-                            const distB = Math.abs(cxB - expectedCenterPx);
-
-                            // ====== 最关键逻辑：只有距离这一个唯一标准！绝对不看它的画幅大小 ======
-                            return distA - distB;
-                        })[0];
-
-                        // 如果连最近的物体，都偏离了目标区域超过 300 像素，证明那个物体消失了（画面大换场或它被挡住了）。
-                        // 此时绝不能跑去跟踪其他偏远物体！我们把 bestTarget 设为 null，让视野定格在原地等它回来！
-                        if (bestTarget) {
-                            const cxBest = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
-                            if (Math.abs(cxBest - expectedCenterPx) > 300) {
-                                bestTarget = null; // 丢失视野，定格原地
-                            }
-                        }
-                    }
-                } else {
-                    // ====== 模式 A：默认严谨人物跟踪模式 ======
-                    const persons = predictions.filter(p => p.class === 'person');
-                    if (persons.length > 0) {
-                        bestTarget = persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0];  // 默认找画幅最大的正交人物，不被小角落骗
-                    }
-                }
-
-                // 处理最终结果更新
-                if (bestTarget) {
-                    const cx = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
-                    let normOffset = 0;
-                    if (maxOffset > 0) normOffset = (cx - vWidth / 2) / maxOffset;
-                    let safeOffset = Math.max(-1, Math.min(1, normOffset));
-
-                    if (manualLockTargetRef.current !== null) {
-                        // 正常的连续跟踪，丝滑混合推进锁定目标心
-                        safeOffset = manualLockTargetRef.current * 0.7 + safeOffset * 0.3;
-                        manualLockTargetRef.current = safeOffset;
-                    } else {
-                        // 自动追踪模式的惯性过滤
-                        if (lastTrackedOffsetRef.current !== undefined) {
-                            safeOffset = lastTrackedOffsetRef.current * 0.7 + safeOffset * 0.3;
-                        }
-                    }
-
-                    setCropOffset(safeOffset);
-                    lastTrackedOffsetRef.current = safeOffset; // Universal tracker ref fallback
+                const result = await runAiDetection(videoRefVal, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                if (result !== null) {
+                    setCropOffset(result);
                 }
             } catch (err) {
                 console.error("AI tracking err:", err);
             }
-            setTimeout(() => { isDetectingRef.current = false; }, 80);
+            // 冷却时间：播放中 120ms（减少无效检测），seek中 40ms（保持响应）
+            const cooldown = isPlaying ? 120 : 40;
+            setTimeout(() => { isDetectingRef.current = false; }, cooldown);
         }
     };
 
@@ -288,6 +295,28 @@ function App() {
             setCurrentTime(time);
         }
     };
+
+    // ====== 链式 Seek：等帧解码完毕后再触发 AI 检测 + 跳下一帧 ======
+    useEffect(() => {
+        if (!videoRefVal) return;
+        const onSeeked = async () => {
+            // 在 seek 完成后运行 AI 检测（帧此时已解码就绪）
+            if (autoTrack && aiModel && portraitRatio && !isDetectingRef.current) {
+                isDetectingRef.current = true;
+                try {
+                    const result = await runAiDetection(videoRefVal, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                    if (result !== null) {
+                        setCropOffset(result);
+                    }
+                } catch (err) {
+                    console.error("AI seek-detect err:", err);
+                }
+                isDetectingRef.current = false;
+            }
+        };
+        videoRefVal.addEventListener('seeked', onSeeked);
+        return () => videoRefVal.removeEventListener('seeked', onSeeked);
+    }, [videoRefVal, autoTrack, aiModel, portraitRatio]);
 
 
     const handleFileLoaded = async (file) => {
@@ -439,7 +468,6 @@ function App() {
         if (!videoRefVal || isExtracting) return;
         setIsExtracting(true);
 
-        // Use Range instead of full duration
         const effectiveStart = rangeStart;
         const effectiveEnd = (rangeEnd > 0) ? rangeEnd : duration;
         const activeDuration = effectiveEnd - effectiveStart;
@@ -449,10 +477,7 @@ function App() {
             return;
         }
 
-        // Interval
-        // Distribute frames evenly from Start to End (Inclusive)
         const interval = (targetCount > 1) ? activeDuration / (targetCount - 1) : 0;
-
         let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
 
         for (let i = 0; i < targetCount; i++) {
@@ -462,70 +487,19 @@ function App() {
             videoRefVal.currentTime = timeToCapture;
             setCurrentTime(timeToCapture);
 
-            // Wait for video frame to decode...
-            await new Promise(r => setTimeout(r, 450));
+            // ====== 用 seeked 事件确认帧已解码就绪，替代盲等 450ms ======
+            await waitForSeeked(videoRefVal, 800);
+            // 额外等一帧渲染，确保画面已绘制
+            await new Promise(r => requestAnimationFrame(r));
 
             let didDetect = false;
 
-            // Force AI detection inline before capture if AutoTrack is on
+            // 复用通用 AI 检测逻辑
             if (autoTrack && aiModel && portraitRatio) {
                 try {
-                    const threshold = manualLockTargetRef.current !== null ? 0.05 : 0.45;
-                    const predictions = await aiModel.detect(videoRefVal, 30, threshold);
-
-                    let bestTarget = null;
-                    const vWidth = videoRefVal.videoWidth || 1920;
-                    const vHeight = videoRefVal.videoHeight || 1080;
-                    const ratioParts = portraitRatio.split(':');
-                    const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-                    const targetWidth = vHeight * targetAspect;
-                    const maxOffset = (vWidth - targetWidth) / 2;
-
-                    const validClassesPrefix = ['person', 'dog', 'cat', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'car', 'truck', 'bus', 'train', 'motorcycle', 'airplane', 'bicycle', 'boat', 'chair', 'couch', 'bed'];
-
-                    if (manualLockTargetRef.current !== null) {
-                        const targets = predictions.filter(p => validClassesPrefix.includes(p.class) || p.score > 0.05);
-
-                        if (targets.length > 0) {
-                            const expectedCenterPx = manualLockTargetRef.current * maxOffset + vWidth / 2;
-                            bestTarget = targets.sort((a, b) => {
-                                const distA = Math.abs((a.bbox[0] + a.bbox[2] / 2) - expectedCenterPx);
-                                const distB = Math.abs((b.bbox[0] + b.bbox[2] / 2) - expectedCenterPx);
-                                return distA - distB;
-                            })[0];
-
-                            if (bestTarget) {
-                                const cxBest = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
-                                if (Math.abs(cxBest - expectedCenterPx) > 300) {
-                                    bestTarget = null;
-                                }
-                            }
-                        }
-                    } else {
-                        const persons = predictions.filter(p => p.class === 'person');
-                        if (persons.length > 0) {
-                            bestTarget = persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0];
-                        }
-                    }
-
-                    if (bestTarget) {
-                        const cx = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
-                        let normOffset = 0;
-                        if (maxOffset > 0) normOffset = (cx - vWidth / 2) / maxOffset;
-                        let rawOffset = Math.max(-1, Math.min(1, normOffset));
-
-                        if (manualLockTargetRef.current !== null) {
-                            rawOffset = manualLockTargetRef.current * 0.7 + rawOffset * 0.3;
-                            manualLockTargetRef.current = rawOffset;
-                        } else {
-                            if (lastTrackedOffsetRef.current !== undefined) {
-                                rawOffset = lastTrackedOffsetRef.current * 0.7 + rawOffset * 0.3;
-                            }
-                        }
-
-                        trackingOffset = rawOffset;
-                        lastTrackedOffsetRef.current = rawOffset;
-
+                    const result = await runAiDetection(videoRefVal, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                    if (result !== null) {
+                        trackingOffset = result;
                         await captureFrame(trackingOffset);
                         didDetect = true;
                     }
@@ -534,7 +508,6 @@ function App() {
                 }
             }
 
-            // Fallback: normal capture using either the last valid tracking offset or standard offset
             if (!didDetect) {
                 await captureFrame(autoTrack ? trackingOffset : cropOffset);
             }
@@ -549,29 +522,53 @@ function App() {
         stateRef.current = { videoRefVal, duration, fps, seekStep, togglePlay, captureFrame, handleSetStart, handleSetEnd, handleSeek };
     });
 
-    const activeSeekInterval = useRef(null);
-
     useEffect(() => {
-        const processSeekOnce = (direction) => {
+        // ====== 固定节拍 Seek：匀速 + 帧就绪门控 ======
+        // 固定间隔定时器保证匀速，seekReady 标志位保证只有前一帧解码完才跳下一帧
+        let seekActive = false;
+        let seekDirection = 0;
+        let seekIntervalId = null;
+        let seekReady = true; // 门控：上一帧是否已解码完毕
+
+        const processSeekTick = () => {
+            if (!seekActive || !seekReady) return; // 帧未就绪则跳过本次 tick
             const { videoRefVal, duration, fps, seekStep, handleSeek } = stateRef.current;
-            if (!videoRefVal) return;
-            let newTime = videoRefVal.currentTime + direction * seekStep * (1 / fps);
+            if (!videoRefVal) { seekActive = false; return; }
+
+            let newTime = videoRefVal.currentTime + seekDirection * seekStep * (1 / fps);
             newTime = Math.max(0, Math.min(duration, newTime));
+
+            // 到达边界就停止
+            if ((seekDirection > 0 && newTime >= duration) || (seekDirection < 0 && newTime <= 0)) {
+                handleSeek(newTime);
+                stopSeek();
+                return;
+            }
+
+            seekReady = false; // 锁定，等帧渲染完
             handleSeek(newTime);
+
+            // 纯 seeked 事件门控：帧解码完毕自动放行，不强制超时解锁
+            videoRefVal.addEventListener('seeked', () => { seekReady = true; }, { once: true });
         };
 
         const startSeek = (direction) => {
-            if (activeSeekInterval.current) return;
-            processSeekOnce(direction); // trigger immediately once
-            activeSeekInterval.current = setInterval(() => {
-                processSeekOnce(direction);
-            }, 50); // 连续按50ms一跳，既不卡司机，视觉也丝滑
+            if (seekActive) return;
+            seekActive = true;
+            seekDirection = direction;
+            seekReady = true;
+            processSeekTick(); // 立即第一跳
+            // 固定 100ms 间隔 = 匀速 10 次/秒
+            seekIntervalId = setInterval(processSeekTick, 100);
         };
 
         const stopSeek = () => {
-            if (activeSeekInterval.current) {
-                clearInterval(activeSeekInterval.current);
-                activeSeekInterval.current = null;
+            seekActive = false;
+            seekDirection = 0;
+            seekReady = true;
+            if (seekIntervalId) {
+                clearInterval(seekIntervalId);
+                seekIntervalId = null;
             }
         };
 
