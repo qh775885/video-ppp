@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2, FolderOpen, Image as ImageIcon, Download, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { version } from '../../package.json';
 
 export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDir }) {
     const [previewIndex, setPreviewIndex] = useState(-1); // -1 means closed
@@ -138,7 +139,7 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
 
                 <div className="flex items-center justify-between text-[10px] text-zinc-600 font-mono mt-1">
                     <button onClick={() => setIsAboutOpen(true)} className="hover:text-zinc-400 transition-colors cursor-pointer">关于本软件</button>
-                    <span>v2.0.7</span>
+                    <span>v{version}</span>
                 </div>
             </div>
 
@@ -163,7 +164,7 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                                 <ImageIcon size={32} className="text-white drop-shadow-md" />
                             </div>
                             <h2 className="text-xl font-bold text-white tracking-widest">视频截图神器</h2>
-                            <span className="text-xs font-mono text-zinc-400">v2.0.7 (开源免费版)</span>
+                            <span className="text-xs font-mono text-zinc-400">v{version} (开源免费版)</span>
                         </div>
 
                         <div className="text-sm text-zinc-300 leading-relaxed text-center">
