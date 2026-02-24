@@ -3,7 +3,18 @@
 ## 技术栈
 - React 19 + Electron + Tailwind CSS v4
 - AI：TensorFlow.js + COCO-SSD（lite_mobilenet_v2），本地推理 ~50-100ms
-- 视频：FFmpeg（ffmpeg-static），支持 MP4/MKV/TS/AVI/MOV
+- 视频提取：FFmpeg（ffmpeg-static）批量解码，支持 MP4/MKV/TS/AVI/MOV
+
+## FFmpeg 提取架构（v2.1.0）
+- `electron-main.js` 的 `extract-frames` IPC：一次 FFmpeg 调用提取所有候选帧到临时目录
+- 渲染进程通过 `ipcRenderer.invoke('extract-frames', ...)` 调用，返回帧文件路径数组
+- 临时文件在 `finally` 块中自动清理，**禁止跳过清理逻辑**
+
+## 提取算法：分段优选（v2.1.0）
+- 视频等分 N 段（N=目标张数），每段过采样 4 帧
+- 每段取 Laplacian 评分最高（最清晰）的帧作为输出
+- **不再使用** dHash 去重、多样化补充等旧逻辑
+- 设几张就出几张，天然均匀覆盖、天然不重复
 
 ## 长按快进机制（v2.0.8 定稿）
 - 采用「固定节拍 setInterval(100ms) + seeked 事件门控」
