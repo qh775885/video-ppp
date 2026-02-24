@@ -1,11 +1,6 @@
 # 视频截图神器
 一款基于 React + Electron 的视频截图与自动提取工具。
 
-```
-网盘下载地址
-迅雷：https://pan.xunlei.com/s/VOiGf_rK0uVZCW5AfyBHI4_OA1?pwd=bcad
-百度：https://pan.baidu.com/s/1X3PaoPJGoRZThQnqUood5g?pwd=kp49 (提取码: kp49)
-```
 <img width="1150" height="866" alt="QQ20260221-191718" src="https://github.com/user-attachments/assets/7f42c901-5630-4999-9598-299a2af6af62" />
 
 ## 功能

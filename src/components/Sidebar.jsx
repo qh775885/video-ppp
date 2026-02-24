@@ -73,13 +73,28 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                             {frames.length}
                         </span>
                         {frames.length > 0 && (
-                            <button
-                                onClick={() => onClear()}
-                                className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-red-400 transition-colors px-2 py-1 rounded hover:bg-red-500/10"
-                            >
-                                <Trash2 size={12} />
-                                清空
-                            </button>
+                            <div className="relative group">
+                                <button
+                                    className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-red-400 transition-colors px-2 py-1 rounded hover:bg-red-500/10"
+                                >
+                                    <Trash2 size={12} />
+                                    清空
+                                </button>
+                                <div className="absolute right-0 top-full mt-1 w-[140px] py-1 bg-zinc-900 border border-white/10 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                                    <button
+                                        onClick={() => onClear(false)}
+                                        className="w-full text-left px-3 py-1.5 text-[10px] text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                                    >
+                                        仅清空图库
+                                    </button>
+                                    <button
+                                        onClick={() => onClear(true)}
+                                        className="w-full text-left px-3 py-1.5 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                                    >
+                                        清空并删除文件
+                                    </button>
+                                </div>
+                            </div>
                         )}
                     </div>
                 </div>

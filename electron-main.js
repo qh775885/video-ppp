@@ -94,24 +94,24 @@ ipcMain.handle('process-media', (event, filePath) => {
             console.error("Empty filePath received in process-media");
             return reject(new Error("No path specified for media processing"));
         }
-        
+
         ffmpeg.ffprobe(filePath, (err, metadata) => {
             if (err) {
                 console.error("FFprobe Error:", err);
                 return reject(err);
             }
-            
+
             const vStream = metadata.streams.find(s => s.codec_type === 'video');
             const aStream = metadata.streams.find(s => s.codec_type === 'audio');
             const vCodec = vStream ? (vStream.codec_name || '').toLowerCase() : '';
             const aCodec = aStream ? (aStream.codec_name || '').toLowerCase() : '';
-            
+
             const tempPath = path.join(os.tmpdir(), `vme_${Date.now()}.mp4`);
             const command = ffmpeg(filePath);
-            
+
             // HEVC(H.265) and older formats need transcode on standard Chromium, otherwise remux is fast and lossless.
             const needsVideoTranscode = ['hevc', 'h265', 'mpeg4', 'mpeg2video', 'msmpeg4', 'divx', 'xvid'].includes(vCodec);
-            
+
             if (needsVideoTranscode) {
                 command.outputOptions(['-c:v libx264', '-preset ultrafast', '-crf 23']); // ultrafast encoding
             } else if (vCodec) {
@@ -125,7 +125,7 @@ ipcMain.handle('process-media', (event, filePath) => {
             } else {
                 command.outputOptions(['-an']);
             }
-            
+
             command.outputOptions([
                 '-map 0:v:0',          // ONLY grab the MAIN video track
                 '-map 0:a:0?',         // ONLY grab the 1st audio track if exists
@@ -134,13 +134,51 @@ ipcMain.handle('process-media', (event, filePath) => {
                 '-movflags +faststart', // CRITICAL: Moves MOOV atom to beginning, completely fixes IDM drag-and-drop bug
                 '-y'
             ])
-            .on('end', () => resolve(tempPath))
-            .on('error', (err, stdout, stderr) => {
-                console.error("FFMPEG PROCESS MEDIA ERROR:", stderr);
-                reject(new Error(`${err.message} | STDERR: ${stderr}`));
-            })
-            .save(tempPath);
+                .on('end', () => resolve(tempPath))
+                .on('error', (err, stdout, stderr) => {
+                    console.error("FFMPEG PROCESS MEDIA ERROR:", stderr);
+                    reject(new Error(`${err.message} | STDERR: ${stderr}`));
+                })
+                .save(tempPath);
         });
+    });
+});
+
+// FFmpeg 批量帧提取：一次性解码所有候选帧到临时目录
+ipcMain.handle('extract-frames', (event, { filePath, startTime, duration, fps: targetFps, outputDir }) => {
+    return new Promise((resolve, reject) => {
+        if (!filePath) return reject(new Error('extract-frames: no input file'));
+
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+
+        const outputPattern = path.join(outputDir, 'frame_%04d.jpg');
+
+        ffmpeg(filePath)
+            .seekInput(startTime)
+            .duration(duration)
+            .videoFilter(`fps=${targetFps}`)
+            .outputOptions([
+                '-q:v 2',
+                '-fps_mode vfr'
+            ])
+            .output(outputPattern)
+            .on('end', () => {
+                try {
+                    const files = fs.readdirSync(outputDir)
+                        .filter(f => f.startsWith('frame_') && f.endsWith('.jpg'))
+                        .sort()
+                        .map(f => path.join(outputDir, f));
+                    resolve(files);
+                } catch (readErr) {
+                    reject(new Error(`Failed to read extracted frames: ${readErr.message}`));
+                }
+            })
+            .on('error', (err, stdout, stderr) => {
+                reject(new Error(`FFmpeg extract-frames failed: ${err.message} | ${stderr || ''}`));
+            })
+            .run();
     });
 });
 

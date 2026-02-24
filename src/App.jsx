@@ -80,6 +80,30 @@ const hashDistance = (a, b) => {
     return dist;
 };
 
+// ====== 从文件路径加载图片到 HTMLImageElement ======
+const loadImageFromPath = (filePath) => {
+    return new Promise((resolve, reject) => {
+        const fs = window.require('fs');
+        try {
+            const buffer = fs.readFileSync(filePath);
+            const blob = new Blob([buffer], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                resolve(img);
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                reject(new Error(`Failed to load image: ${filePath}`));
+            };
+            img.src = url;
+        } catch (err) {
+            reject(new Error(`Failed to read image file: ${filePath} - ${err.message}`));
+        }
+    });
+};
+
 // Shell Layout
 const TRACKABLE_CLASSES = [
     'person', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe',
@@ -110,6 +134,7 @@ function App() {
     const [targetCount, setTargetCount] = useState(12);
     const [isExtracting, setIsExtracting] = useState(false);
     const [extractElapsed, setExtractElapsed] = useState(0); // 提取用时（秒）
+    const [extractStatus, setExtractStatus] = useState(''); // 提取阶段文字
     const extractTimerRef = useRef(null);
 
     // --- New AI / Advanced State ---
@@ -196,7 +221,25 @@ function App() {
         // Reverse calc multiplier for display? nah, keep it simple.
     };
 
-    const handleClear = () => setFrames([]);
+    const handleClear = (deleteLocal = false) => {
+        if (deleteLocal && cacheDir && videoFile) {
+            try {
+                const fs = window.require('fs');
+                const path = window.require('path');
+                const sanitize = (name) => {
+                    const nameNoExt = name.substring(0, name.lastIndexOf('.')) || name;
+                    return nameNoExt.replace(/[<>:"/\\|?*]/g, '').replace(/[\s.]+$/g, '').trim();
+                };
+                const targetDir = path.join(cacheDir, sanitize(videoFile.name));
+                if (fs.existsSync(targetDir)) {
+                    fs.rmSync(targetDir, { recursive: true, force: true });
+                }
+            } catch (err) {
+                console.error('Delete local folder failed:', err);
+            }
+        }
+        setFrames([]);
+    };
     // --- Persistence ---
     useEffect(() => {
         const saved = localStorage.getItem('video-ppp-cache-dir');
@@ -263,8 +306,8 @@ function App() {
         const predictions = await model.detect(video, 30, threshold);
 
         let bestTarget = null;
-        const vWidth = video.videoWidth || 1920;
-        const vHeight = video.videoHeight || 1080;
+        const vWidth = video.videoWidth || video.naturalWidth || video.width || 1920;
+        const vHeight = video.videoHeight || video.naturalHeight || video.height || 1080;
         const ratioParts = ratio.split(':');
         const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
         const targetWidth = vHeight * targetAspect;
@@ -578,6 +621,7 @@ function App() {
         if (!videoRefVal || isExtracting) return;
         setIsExtracting(true);
         setExtractElapsed(0);
+        setExtractStatus('FFmpeg 解码中...');
         const extractStartTime = Date.now();
         extractTimerRef.current = setInterval(() => {
             setExtractElapsed(Math.round((Date.now() - extractStartTime) / 1000));
@@ -593,138 +637,174 @@ function App() {
             return;
         }
 
-        // ====== Phase 1: 采样（总量封顶 96，无论视频多长） ======
+        // ====== Phase 1: FFmpeg 批量解码候选帧 ======
         const candidateCount = Math.min(96, Math.max(24, Math.round(activeDuration * 1)));
         const sampleInterval = activeDuration / candidateCount;
         let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
 
-        const candidates = [];
+        const { ipcRenderer } = window.require('electron');
+        const fsNode = window.require('fs');
+        const pathNode = window.require('path');
+        const osNode = window.require('os');
+        const tempDir = pathNode.join(osNode.tmpdir(), `vme_extract_${Date.now()}`);
 
-        for (let i = 0; i < candidateCount; i++) {
-            const timeToCapture = effectiveStart + (i * sampleInterval);
-            if (timeToCapture > effectiveEnd) break;
+        try {
+            const videoPath = videoFile.loadedPath || videoFile.path;
+            if (!videoPath) throw new Error('No video file path available');
 
-            videoRefVal.currentTime = timeToCapture;
-            setCurrentTime(timeToCapture);
-            await waitForSeeked(videoRefVal, 400); // 400ms 超时，大部分 seek < 100ms
-            await new Promise(r => requestAnimationFrame(r));
+            const framePaths = await ipcRenderer.invoke('extract-frames', {
+                filePath: videoPath,
+                startTime: effectiveStart,
+                duration: activeDuration,
+                fps: candidateCount / activeDuration,
+                outputDir: tempDir
+            });
 
-            // AI 检测偏移
-            let frameOffset = autoTrack ? trackingOffset : cropOffset;
-            if (autoTrack && aiModel && portraitRatio) {
-                try {
-                    const result = await runAiDetection(videoRefVal, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
-                    if (result !== null) {
-                        trackingOffset = result;
-                        frameOffset = result;
+            if (!framePaths || framePaths.length === 0) {
+                throw new Error('FFmpeg extracted 0 frames');
+            }
+
+            setExtractStatus('加载分析中...');
+            const candidates = [];
+            for (let i = 0; i < framePaths.length; i++) {
+                const timeToCapture = effectiveStart + i * sampleInterval;
+                if (timeToCapture > effectiveEnd) break;
+                setExtractStatus(`分析帧 ${i + 1}/${framePaths.length}`);
+
+                const img = await loadImageFromPath(framePaths[i]);
+
+                // AI 检测偏移（对图片做推理，确保裁切准确）
+                let frameOffset = autoTrack ? trackingOffset : cropOffset;
+                if (autoTrack && aiModel && portraitRatio) {
+                    try {
+                        const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                        if (result !== null) {
+                            trackingOffset = result;
+                            frameOffset = result;
+                        }
+                    } catch (err) {
+                        console.error('Smart extract AI detect failed:', err);
                     }
-                } catch (err) {
-                    console.error("Smart extract AI detect failed:", err);
                 }
-            }
 
-            // 截取候选帧到 Canvas
-            const vWidth = videoRefVal.videoWidth;
-            const vHeight = videoRefVal.videoHeight;
-            let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
+                // 截取候选帧到 Canvas
+                const vWidth = img.naturalWidth || img.width;
+                const vHeight = img.naturalHeight || img.height;
+                let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
 
-            if (portraitRatio) {
-                const ratioParts = portraitRatio.split(':');
-                const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-                const targetWidth = vHeight * targetAspect;
-                if (targetWidth <= vWidth) {
-                    sWidth = targetWidth;
-                    const maxOff = (vWidth - sWidth) / 2;
-                    sx = (vWidth - sWidth) / 2 + frameOffset * maxOff;
-                } else {
-                    sHeight = vWidth / targetAspect;
-                    sy = (vHeight - sHeight) / 2;
-                }
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = sWidth;
-            canvas.height = sHeight;
-            canvas.getContext('2d').drawImage(videoRefVal, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
-
-            const sharpness = computeSharpness(canvas);
-            const hash = computeDHash(canvas);
-            candidates.push({ time: timeToCapture, canvas, sharpness, hash, offset: frameOffset });
-        }
-
-        if (candidates.length === 0) {
-            if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
-            setIsExtracting(false);
-            return;
-        }
-
-        // ====== Phase 2: 时间分段 + 清晰度选帧 ======
-        const segmentCount = Math.min(targetCount, Math.max(6, Math.round(activeDuration / 2)));
-        const segmentDuration = activeDuration / segmentCount;
-        const segmentBest = [];
-
-        for (let seg = 0; seg < segmentCount; seg++) {
-            const segStart = effectiveStart + seg * segmentDuration;
-            const segEnd = segStart + segmentDuration;
-            const segFrames = candidates.filter(c => c.time >= segStart && c.time < segEnd);
-            if (segFrames.length > 0) {
-                segFrames.sort((a, b) => b.sharpness - a.sharpness);
-                segmentBest.push(segFrames[0]);
-            }
-        }
-
-        // ====== Phase 3: 哈希去重 ======
-        const HASH_SIMILAR = 25;
-        const deduplicated = [segmentBest[0]];
-        for (let i = 1; i < segmentBest.length; i++) {
-            let isDuplicate = false;
-            for (const selected of deduplicated) {
-                if (hashDistance(segmentBest[i].hash, selected.hash) < HASH_SIMILAR) {
-                    if (segmentBest[i].sharpness > selected.sharpness) {
-                        deduplicated[deduplicated.indexOf(selected)] = segmentBest[i];
+                if (portraitRatio) {
+                    const ratioParts = portraitRatio.split(':');
+                    const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                    const targetWidth = vHeight * targetAspect;
+                    if (targetWidth <= vWidth) {
+                        sWidth = targetWidth;
+                        const maxOff = (vWidth - sWidth) / 2;
+                        sx = (vWidth - sWidth) / 2 + frameOffset * maxOff;
+                    } else {
+                        sHeight = vWidth / targetAspect;
+                        sy = (vHeight - sHeight) / 2;
                     }
-                    isDuplicate = true;
-                    break;
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = sWidth;
+                canvas.height = sHeight;
+                canvas.getContext('2d').drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+
+                const sharpness = computeSharpness(canvas);
+                const hash = computeDHash(canvas);
+                candidates.push({ time: timeToCapture, canvas, sharpness, hash, offset: frameOffset });
+            }
+
+            if (candidates.length === 0) {
+                if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
+                setIsExtracting(false);
+                return;
+            }
+
+            setExtractStatus('筛选去重中...');
+            // ====== Phase 2: 时间分段 + 清晰度选帧 ======
+            const segmentCount = Math.min(targetCount, Math.max(6, Math.round(activeDuration / 2)));
+            const segmentDuration = activeDuration / segmentCount;
+            const segmentBest = [];
+
+            for (let seg = 0; seg < segmentCount; seg++) {
+                const segStart = effectiveStart + seg * segmentDuration;
+                const segEnd = segStart + segmentDuration;
+                const segFrames = candidates.filter(c => c.time >= segStart && c.time < segEnd);
+                if (segFrames.length > 0) {
+                    segFrames.sort((a, b) => b.sharpness - a.sharpness);
+                    segmentBest.push(segFrames[0]);
                 }
             }
-            if (!isDuplicate) {
-                deduplicated.push(segmentBest[i]);
-            }
-        }
 
-        // ====== Phase 4: 补充多样化帧 ======
-        if (deduplicated.length < targetCount) {
-            const sharpnessValues = candidates.map(c => c.sharpness).sort((a, b) => a - b);
-            const medianSharpness = sharpnessValues[Math.floor(sharpnessValues.length / 2)];
-            const remaining = candidates
-                .filter(c => !deduplicated.includes(c) && c.sharpness >= medianSharpness)
-                .sort((a, b) => {
-                    const minDistA = Math.min(...deduplicated.map(s => hashDistance(a.hash, s.hash)));
-                    const minDistB = Math.min(...deduplicated.map(s => hashDistance(b.hash, s.hash)));
-                    return minDistB - minDistA;
-                });
-            for (const candidate of remaining) {
-                if (deduplicated.length >= targetCount) break;
-                const minDist = Math.min(...deduplicated.map(s => hashDistance(candidate.hash, s.hash)));
-                if (minDist >= HASH_SIMILAR) {
-                    deduplicated.push(candidate);
+            // ====== Phase 3: 哈希去重 ======
+            const HASH_SIMILAR = 25;
+            const deduplicated = [segmentBest[0]];
+            for (let i = 1; i < segmentBest.length; i++) {
+                let isDuplicate = false;
+                for (const selected of deduplicated) {
+                    if (hashDistance(segmentBest[i].hash, selected.hash) < HASH_SIMILAR) {
+                        if (segmentBest[i].sharpness > selected.sharpness) {
+                            deduplicated[deduplicated.indexOf(selected)] = segmentBest[i];
+                        }
+                        isDuplicate = true;
+                        break;
+                    }
+                }
+                if (!isDuplicate) {
+                    deduplicated.push(segmentBest[i]);
                 }
             }
-        }
 
-        // ====== Phase 5: 上限裁剪 + 直接复用 Canvas 输出（零 re-seek） ======
-        let finalFrames = deduplicated;
-        if (finalFrames.length > targetCount && targetCount > 0) {
-            finalFrames = [...finalFrames].sort((a, b) => b.sharpness - a.sharpness).slice(0, targetCount);
-        }
-        finalFrames.sort((a, b) => a.time - b.time);
+            // ====== Phase 4: 补充多样化帧 ======
+            if (deduplicated.length < targetCount) {
+                const sharpnessValues = candidates.map(c => c.sharpness).sort((a, b) => a - b);
+                const medianSharpness = sharpnessValues[Math.floor(sharpnessValues.length / 2)];
+                const remaining = candidates
+                    .filter(c => !deduplicated.includes(c) && c.sharpness >= medianSharpness)
+                    .sort((a, b) => {
+                        const minDistA = Math.min(...deduplicated.map(s => hashDistance(a.hash, s.hash)));
+                        const minDistB = Math.min(...deduplicated.map(s => hashDistance(b.hash, s.hash)));
+                        return minDistB - minDistA;
+                    });
+                for (const candidate of remaining) {
+                    if (deduplicated.length >= targetCount) break;
+                    const minDist = Math.min(...deduplicated.map(s => hashDistance(candidate.hash, s.hash)));
+                    if (minDist >= HASH_SIMILAR) {
+                        deduplicated.push(candidate);
+                    }
+                }
+            }
 
-        for (const frame of finalFrames) {
-            await saveCanvasAsFrame(frame.canvas, frame.time);
+            setExtractStatus('保存中...');
+            // ====== Phase 5: 上限裁剪 + 直接复用 Canvas 输出 ======
+            let finalFrames = deduplicated;
+            if (finalFrames.length > targetCount && targetCount > 0) {
+                finalFrames = [...finalFrames].sort((a, b) => b.sharpness - a.sharpness).slice(0, targetCount);
+            }
+            finalFrames.sort((a, b) => a.time - b.time);
+
+            for (const frame of finalFrames) {
+                await saveCanvasAsFrame(frame.canvas, frame.time);
+            }
+
+        } catch (err) {
+            console.error('FFmpeg extraction failed:', err);
+        } finally {
+            // 清理临时目录
+            try {
+                if (fsNode.existsSync(tempDir)) {
+                    fsNode.rmSync(tempDir, { recursive: true, force: true });
+                }
+            } catch (cleanupErr) {
+                console.error('Temp directory cleanup failed:', cleanupErr);
+            }
         }
 
         if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
         setExtractElapsed(Math.round((Date.now() - extractStartTime) / 1000));
+        setExtractStatus('');
         setIsExtracting(false);
     };
 
@@ -861,6 +941,21 @@ function App() {
                 </div>
             )}
 
+            {isExtracting && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-5 text-white">
+                        <div className="relative">
+                            <Loader2 className="animate-spin text-indigo-500" size={56} />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="text-xs font-mono font-bold text-indigo-300">{extractElapsed}s</span>
+                            </div>
+                        </div>
+                        <div className="font-bold tracking-widest text-lg">{extractStatus || '提取中...'}</div>
+                        <div className="text-zinc-500 text-xs">提取完成前请勿操作</div>
+                    </div>
+                </div>
+            )}
+
             {/* Zone A: The Stage */}
             <div className={`relative flex-1 flex flex-col items-center justify-center bg-black group w-full h-full transition-[padding] duration-300 ${isVerticalContent ? 'pb-40' : ''}`}>
                 <VideoStage
@@ -916,6 +1011,7 @@ function App() {
                             onMultiplierChange={handleMultiplierChange}
                             isExtracting={isExtracting}
                             extractElapsed={extractElapsed}
+                            extractStatus={extractStatus}
                             onExtract={handleSmartExtract}
                         />
                     </div>
@@ -945,7 +1041,7 @@ function FloatingCockpit({
     autoTrack, onToggleAutoTrack, aiModelReady, isAiLoading,
     targetCount, onTargetCountChange,
     multiplier, onMultiplierChange,
-    isExtracting, extractElapsed, onExtract
+    isExtracting, extractElapsed, extractStatus, onExtract
 }) {
     // Local State for Range Mode Toggle
     // We lift this up if App needs to know, but for UI visibility, local is fine.
