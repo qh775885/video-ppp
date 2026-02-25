@@ -190,21 +190,32 @@ function App() {
         }
     }, [duration, fps]);
 
-    // Handlers for Range
+    // Handlers for Range — 区间变化时重新推荐张数
     const handleSetStart = () => {
         const t = videoRefVal ? videoRefVal.currentTime : 0;
-        setRangeStart(Math.min(t, rangeEnd));
-        updateCountFromMultiplier(multiplier, Math.min(t, rangeEnd), rangeEnd);
+        const newStart = Math.min(t, rangeEnd);
+        setRangeStart(newStart);
+        const rangeDuration = rangeEnd - newStart;
+        if (rangeDuration > 0) {
+            const recommended = getRecommendedCount(rangeDuration, fps);
+            setTargetCount(recommended);
+        }
     };
     const handleSetEnd = () => {
         const t = videoRefVal ? videoRefVal.currentTime : duration;
-        setRangeEnd(Math.max(t, rangeStart));
-        updateCountFromMultiplier(multiplier, rangeStart, Math.max(t, rangeStart));
+        const newEnd = Math.max(t, rangeStart);
+        setRangeEnd(newEnd);
+        const rangeDuration = newEnd - rangeStart;
+        if (rangeDuration > 0) {
+            const recommended = getRecommendedCount(rangeDuration, fps);
+            setTargetCount(recommended);
+        }
     };
     const handleResetRange = () => {
         setRangeStart(0);
         setRangeEnd(duration);
-        updateCountFromMultiplier(multiplier, 0, duration);
+        const recommended = getRecommendedCount(duration, fps);
+        setTargetCount(recommended);
     };
 
     // Handler for Multiplier Change -> Auto set Count
