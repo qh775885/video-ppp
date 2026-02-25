@@ -11,10 +11,14 @@ const formatTime = (seconds) => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')} `;
 };
 
-// ====== v2.0.9 智能推荐张数：平方根缩放 ======
-const getRecommendedCount = (durationSec) => {
+// ====== v2.1.1 智能推荐张数：幂律缩放 + fps 修正 ======
+// 基础：d^0.6 × 3.5（实测拟合）
+// fps 修正：高帧率视频冗余帧更多且处理更慢，适当降低
+const getRecommendedCount = (durationSec, videoFps = 30) => {
     if (!durationSec || durationSec <= 0) return 10;
-    return Math.min(48, Math.max(6, Math.round(Math.sqrt(durationSec) * 3)));
+    const fpsFactor = Math.pow(30 / Math.max(24, videoFps), 0.3); // 30fps→1.0, 60fps→0.81
+    const raw = Math.round(Math.pow(durationSec, 0.6) * 3.5 * fpsFactor);
+    return Math.max(10, raw);
 };
 
 // ====== 清晰度评分：Laplacian 方差（值越高越清晰） ======
@@ -175,14 +179,16 @@ function App() {
     };
 
     // Sync end range when duration loads — 使用智能推荐张数
+    // 去掉 rangeEnd===0 条件，每次 duration 变化都重新同步（修复切换视频时范围不更新）
     useEffect(() => {
-        if (duration > 0 && rangeEnd === 0) {
+        if (duration > 0) {
+            setRangeStart(0);
             setRangeEnd(duration);
-            const recommended = getRecommendedCount(duration);
+            const recommended = getRecommendedCount(duration, fps);
             setTargetCount(recommended);
             setMultiplier(parseFloat((recommended / duration).toFixed(1)) || 1);
         }
-    }, [duration]);
+    }, [duration, fps]);
 
     // Handlers for Range
     const handleSetStart = () => {
@@ -436,6 +442,11 @@ function App() {
 
     const handleFileLoaded = async (file) => {
         setIsVideoLoading(true);
+        // 重置范围状态，确保新视频不会沿用旧视频的范围
+        setRangeStart(0);
+        setRangeEnd(0);
+        setDuration(0); // 强制归零，确保新视频 duration 变化触发 useEffect 重算推荐张数
+        setFrames([]);
         const { ipcRenderer, webUtils } = window.require('electron');
         try {
             // Electron 30+ 隐藏了 file.path，需要用 webUtils 提权获取真实路径
@@ -616,19 +627,19 @@ function App() {
         });
     };
 
-    // ====== v2.0.9 智能提取：极致速度版 ======
+    // ====== v2.1.1 智能提取：动态策略选择 + dHash 去重 ======
     const handleSmartExtract = async () => {
         if (!videoRefVal || isExtracting) return;
         setIsExtracting(true);
         setExtractElapsed(0);
-        setExtractStatus('FFmpeg 解码中...');
+        setExtractStatus('准备中...');
         const extractStartTime = Date.now();
         extractTimerRef.current = setInterval(() => {
             setExtractElapsed(Math.round((Date.now() - extractStartTime) / 1000));
         }, 500);
 
-        const effectiveStart = rangeStart;
-        const effectiveEnd = (rangeEnd > 0) ? rangeEnd : duration;
+        const effectiveStart = Math.max(0, rangeStart);
+        const effectiveEnd = Math.min(duration, (rangeEnd > 0) ? rangeEnd : duration);
         const activeDuration = effectiveEnd - effectiveStart;
 
         if (activeDuration <= 0.5) {
@@ -637,13 +648,18 @@ function App() {
             return;
         }
 
-        // ====== 分段优选算法 ======
-        // 将视频等分为 N 段（N=目标张数），每段过采样 K 帧，取最清晰的 1 帧
-        const OVERSAMPLE = 4; // 每段采样 4 帧候选
-        const totalCandidates = Math.min(targetCount * OVERSAMPLE, 600); // 候选总数上限 600
-        const candidatesPerSegment = Math.max(2, Math.floor(totalCandidates / targetCount));
-        const actualCandidates = targetCount * candidatesPerSegment;
+        const segmentDuration = activeDuration / targetCount;
+        const OVERSAMPLE = segmentDuration < 2 ? 2 : segmentDuration < 5 ? 3 : 4;
         let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+
+        // ====== 动态策略选择：预估两种方案耗时，选更快的 ======
+        const seekCostPerSeg = fps > 40 ? 0.5 : 0.3;  // 实测：30fps≈0.3s，60fps≈0.5s
+        const seekEstimate = targetCount * seekCostPerSeg;
+        // 扫描公式校准：解码成本 ∝ 时长×帧率，后处理 ∝ 候选总数
+        const totalCandidates = targetCount * OVERSAMPLE;
+        const scanEstimate = activeDuration * (fps / 30) * 0.025 + totalCandidates * 0.03;
+        const useSegmentSeek = seekEstimate < scanEstimate;
+        const DHASH_THRESHOLD = fps > 40 ? 25 : 20; // 高帧率视频要求更大差异
 
         const { ipcRenderer } = window.require('electron');
         const fsNode = window.require('fs');
@@ -655,90 +671,106 @@ function App() {
             const videoPath = videoFile.loadedPath || videoFile.path;
             if (!videoPath) throw new Error('No video file path available');
 
-            const framePaths = await ipcRenderer.invoke('extract-frames', {
-                filePath: videoPath,
-                startTime: effectiveStart,
-                duration: activeDuration,
-                fps: actualCandidates / activeDuration,
-                outputDir: tempDir
-            });
+            let framePaths;
+
+            if (useSegmentSeek) {
+                // ====== 模式 A：分段精准 seek（≤30张） ======
+                const segments = [];
+                for (let seg = 0; seg < targetCount; seg++) {
+                    const segStart = effectiveStart + seg * segmentDuration;
+                    segments.push({ seekTime: segStart, framesNeeded: OVERSAMPLE });
+                }
+                setExtractStatus(`精准提取 (${segments.length} 段)...`);
+                framePaths = await ipcRenderer.invoke('extract-frames-batch', {
+                    filePath: videoPath,
+                    segments,
+                    outputDir: tempDir
+                });
+            } else {
+                // ====== 模式 B：全段扫描（>30张） ======
+                const totalCandidates = targetCount * OVERSAMPLE;
+                setExtractStatus('全段扫描中...');
+                framePaths = await ipcRenderer.invoke('extract-frames', {
+                    filePath: videoPath,
+                    startTime: effectiveStart,
+                    duration: activeDuration,
+                    fps: totalCandidates / activeDuration,
+                    outputDir: tempDir
+                });
+            }
 
             if (!framePaths || framePaths.length === 0) {
                 throw new Error('FFmpeg extracted 0 frames');
             }
 
-            // ====== 加载所有候选帧并评分 ======
-            setExtractStatus('加载分析中...');
-            const sampleInterval = activeDuration / framePaths.length;
-            const candidates = [];
-            for (let i = 0; i < framePaths.length; i++) {
-                const timeToCapture = effectiveStart + i * sampleInterval;
-                if (timeToCapture > effectiveEnd) break;
-                setExtractStatus(`分析帧 ${i + 1}/${framePaths.length}`);
-
-                const img = await loadImageFromPath(framePaths[i]);
-
-                // AI 检测偏移（对图片做推理，确保裁切准确）
-                let frameOffset = autoTrack ? trackingOffset : cropOffset;
-                if (autoTrack && aiModel && portraitRatio) {
-                    try {
-                        const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
-                        if (result !== null) {
-                            trackingOffset = result;
-                            frameOffset = result;
-                        }
-                    } catch (err) {
-                        console.error('Smart extract AI detect failed:', err);
-                    }
-                }
-
-                // 截取候选帧到 Canvas
-                const vWidth = img.naturalWidth || img.width;
-                const vHeight = img.naturalHeight || img.height;
-                let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
-
-                if (portraitRatio) {
-                    const ratioParts = portraitRatio.split(':');
-                    const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-                    const targetWidth = vHeight * targetAspect;
-                    if (targetWidth <= vWidth) {
-                        sWidth = targetWidth;
-                        const maxOff = (vWidth - sWidth) / 2;
-                        sx = (vWidth - sWidth) / 2 + frameOffset * maxOff;
-                    } else {
-                        sHeight = vWidth / targetAspect;
-                        sy = (vHeight - sHeight) / 2;
-                    }
-                }
-
-                const canvas = document.createElement('canvas');
-                canvas.width = sWidth;
-                canvas.height = sHeight;
-                canvas.getContext('2d').drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
-
-                const sharpness = computeSharpness(canvas);
-                candidates.push({ time: timeToCapture, canvas, sharpness, offset: frameOffset });
-            }
-
-            if (candidates.length === 0) {
-                if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
-                setExtractStatus('');
-                setIsExtracting(false);
-                return;
-            }
-
-            // ====== 分段优选：每段取最清晰帧 ======
-            setExtractStatus('优选中...');
-            const segmentDuration = activeDuration / targetCount;
+            // ====== 分段优选 + 跨段 dHash 去重 ======
+            setExtractStatus('分析优选中...');
             const finalFrames = [];
+            let lastHash = null;
 
-            for (let seg = 0; seg < targetCount; seg++) {
-                const segStart = effectiveStart + seg * segmentDuration;
-                const segEnd = segStart + segmentDuration;
-                const segFrames = candidates.filter(c => c.time >= segStart && c.time < segEnd);
-                if (segFrames.length > 0) {
-                    segFrames.sort((a, b) => b.sharpness - a.sharpness);
-                    finalFrames.push(segFrames[0]);
+            if (useSegmentSeek) {
+                // 模式 A：按文件名前缀分组
+                let frameIdx = 0;
+                for (let seg = 0; seg < targetCount; seg++) {
+                    const segStart = effectiveStart + seg * segmentDuration;
+                    const segFramePaths = [];
+                    for (let k = 0; k < OVERSAMPLE && frameIdx < framePaths.length; k++, frameIdx++) {
+                        const expectedPrefix = `seg${String(seg).padStart(4, '0')}`;
+                        const fileName = pathNode.basename(framePaths[frameIdx]);
+                        if (fileName.startsWith(expectedPrefix)) {
+                            segFramePaths.push(framePaths[frameIdx]);
+                        } else {
+                            frameIdx--;
+                            break;
+                        }
+                    }
+                    if (segFramePaths.length === 0) continue;
+
+                    setExtractStatus(`分析段 ${seg + 1}/${targetCount}`);
+                    const ranked = await pickRankedFrames(segFramePaths, segStart, segmentDuration);
+                    // 跨段去重：选与前一帧差异最大的候选
+                    const picked = pickDiverseFrame(ranked, lastHash);
+                    if (picked) {
+                        finalFrames.push(picked);
+                        lastHash = picked.hash;
+                    }
+                }
+            } else {
+                // 模式 B：按时间区间分组
+                const sampleInterval = activeDuration / framePaths.length;
+                const candidates = [];
+                for (let i = 0; i < framePaths.length; i++) {
+                    const timeToCapture = effectiveStart + i * sampleInterval;
+                    if (timeToCapture > effectiveEnd) break;
+                    setExtractStatus(`分析帧 ${i + 1}/${framePaths.length}`);
+                    const img = await loadImageFromPath(framePaths[i]);
+
+                    let frameOffset = autoTrack ? trackingOffset : cropOffset;
+                    if (autoTrack && aiModel && portraitRatio) {
+                        try {
+                            const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                            if (result !== null) { trackingOffset = result; frameOffset = result; }
+                        } catch (err) { console.error('AI detect failed:', err); }
+                    }
+
+                    const canvas = cropToCanvas(img, frameOffset);
+                    const sharpness = computeSharpness(canvas);
+                    const hash = computeDHash(canvas);
+                    candidates.push({ time: timeToCapture, canvas, sharpness, offset: frameOffset, hash });
+                }
+
+                for (let seg = 0; seg < targetCount; seg++) {
+                    const segStart = effectiveStart + seg * segmentDuration;
+                    const segEnd = segStart + segmentDuration;
+                    const segFrames = candidates.filter(c => c.time >= segStart && c.time < segEnd);
+                    if (segFrames.length > 0) {
+                        segFrames.sort((a, b) => b.sharpness - a.sharpness);
+                        const picked = pickDiverseFrame(segFrames, lastHash);
+                        if (picked) {
+                            finalFrames.push(picked);
+                            lastHash = picked.hash;
+                        }
+                    }
                 }
             }
 
@@ -753,7 +785,6 @@ function App() {
         } catch (err) {
             console.error('FFmpeg extraction failed:', err);
         } finally {
-            // 清理临时目录
             try {
                 if (fsNode.existsSync(tempDir)) {
                     fsNode.rmSync(tempDir, { recursive: true, force: true });
@@ -767,6 +798,74 @@ function App() {
         setExtractElapsed(Math.round((Date.now() - extractStartTime) / 1000));
         setExtractStatus('');
         setIsExtracting(false);
+
+        // ====== 内部辅助：裁切图片到 Canvas ======
+        function cropToCanvas(img, frameOffset) {
+            const vWidth = img.naturalWidth || img.width;
+            const vHeight = img.naturalHeight || img.height;
+            let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
+
+            if (portraitRatio) {
+                const ratioParts = portraitRatio.split(':');
+                const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+                const targetWidth = vHeight * targetAspect;
+                if (targetWidth <= vWidth) {
+                    sWidth = targetWidth;
+                    const maxOff = (vWidth - sWidth) / 2;
+                    sx = (vWidth - sWidth) / 2 + frameOffset * maxOff;
+                } else {
+                    sHeight = vWidth / targetAspect;
+                    sy = (vHeight - sHeight) / 2;
+                }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = sWidth;
+            canvas.height = sHeight;
+            canvas.getContext('2d').drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+            return canvas;
+        }
+
+        // ====== 内部辅助：从候选帧中返回按清晰度排序的列表（含 hash） ======
+        async function pickRankedFrames(paths, segStart, segDur) {
+            const results = [];
+
+            for (let k = 0; k < paths.length; k++) {
+                const frameTime = segStart + (k / Math.max(1, paths.length - 1)) * segDur * 0.8;
+                const img = await loadImageFromPath(paths[k]);
+
+                let frameOffset = autoTrack ? trackingOffset : cropOffset;
+                if (autoTrack && aiModel && portraitRatio) {
+                    try {
+                        const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                        if (result !== null) { trackingOffset = result; frameOffset = result; }
+                    } catch (err) { console.error('AI detect failed:', err); }
+                }
+
+                const canvas = cropToCanvas(img, frameOffset);
+                const sharpness = computeSharpness(canvas);
+                const hash = computeDHash(canvas);
+                results.push({ time: frameTime, canvas, sharpness, offset: frameOffset, hash });
+            }
+
+            results.sort((a, b) => b.sharpness - a.sharpness);
+            return results;
+        }
+
+        // ====== 内部辅助：跨段去重选帧 ======
+        // 优先选最清晰帧，但如果与前一已选帧太相似（Hamming < 阈值），则取次优
+        function pickDiverseFrame(ranked, prevHash) {
+            if (!ranked || ranked.length === 0) return null;
+            if (!prevHash) return ranked[0]; // 第一段直接取最清晰
+
+            for (const candidate of ranked) {
+                if (hashDistance(candidate.hash, prevHash) >= DHASH_THRESHOLD) {
+                    return candidate; // 找到一个足够不同的帧
+                }
+            }
+            // 所有候选都与前帧相似，仍取最清晰的（总比跳过好）
+            return ranked[0];
+        }
     };
 
     // 使用 stateRef 持久化最新状态，彻底避免 React 渲染销毁事件监听引起的“长按断触”问题

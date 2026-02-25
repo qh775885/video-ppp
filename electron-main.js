@@ -144,7 +144,7 @@ ipcMain.handle('process-media', (event, filePath) => {
     });
 });
 
-// FFmpeg 批量帧提取：一次性解码所有候选帧到临时目录
+// FFmpeg 全段扫描提取：一次 FFmpeg 调用解码整段视频，适合高张数场景
 ipcMain.handle('extract-frames', (event, { filePath, startTime, duration, fps: targetFps, outputDir }) => {
     return new Promise((resolve, reject) => {
         if (!filePath) return reject(new Error('extract-frames: no input file'));
@@ -161,7 +161,7 @@ ipcMain.handle('extract-frames', (event, { filePath, startTime, duration, fps: t
             .videoFilter(`fps=${targetFps}`)
             .outputOptions([
                 '-q:v 2',
-                '-fps_mode vfr'
+                '-an'
             ])
             .output(outputPattern)
             .on('end', () => {
@@ -179,6 +179,63 @@ ipcMain.handle('extract-frames', (event, { filePath, startTime, duration, fps: t
                 reject(new Error(`FFmpeg extract-frames failed: ${err.message} | ${stderr || ''}`));
             })
             .run();
+    });
+});
+
+// FFmpeg 分段精准 seek 提取：每段独立 seek 取少量帧，跳过无用区间
+// segments: [{ seekTime, framesNeeded }] — 每个段的起始时间和需要的帧数
+ipcMain.handle('extract-frames-batch', (event, { filePath, segments, outputDir }) => {
+    return new Promise(async (resolve, reject) => {
+        if (!filePath) return reject(new Error('extract-frames-batch: no input file'));
+
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+
+        const allFiles = [];
+
+        const extractSegment = (seg, segIndex) => {
+            return new Promise((res, rej) => {
+                const prefix = `seg${String(segIndex).padStart(4, '0')}`;
+                const outputPattern = path.join(outputDir, `${prefix}_frame_%02d.jpg`);
+
+                ffmpeg(filePath)
+                    .seekInput(seg.seekTime)
+                    .outputOptions([
+                        `-vframes ${seg.framesNeeded}`,
+                        '-q:v 2',
+                        '-an'
+                    ])
+                    .output(outputPattern)
+                    .on('end', () => {
+                        try {
+                            const files = fs.readdirSync(outputDir)
+                                .filter(f => f.startsWith(prefix) && f.endsWith('.jpg'))
+                                .sort()
+                                .map(f => path.join(outputDir, f));
+                            res(files);
+                        } catch (readErr) {
+                            rej(new Error(`Failed to read segment ${segIndex} frames: ${readErr.message}`));
+                        }
+                    })
+                    .on('error', (err, stdout, stderr) => {
+                        // 单段失败不中断整体，返回空数组
+                        console.error(`Segment ${segIndex} extract failed: ${err.message}`);
+                        res([]);
+                    })
+                    .run();
+            });
+        };
+
+        try {
+            for (let i = 0; i < segments.length; i++) {
+                const files = await extractSegment(segments[i], i);
+                allFiles.push(...files);
+            }
+            resolve(allFiles);
+        } catch (err) {
+            reject(new Error(`extract-frames-batch failed: ${err.message}`));
+        }
     });
 });
 
