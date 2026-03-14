@@ -179,24 +179,40 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                                 <ImageIcon size={32} className="text-white drop-shadow-md" />
                             </div>
                             <h2 className="text-xl font-bold text-white tracking-widest">视频截图神器</h2>
-                            <span className="text-xs font-mono text-zinc-400">v{version} (开源免费版)</span>
+                            <span className="text-xs font-mono text-zinc-400">v{version}</span>
                         </div>
 
-                        <div className="text-sm text-zinc-300 leading-relaxed text-center">
-                            极速轻量级的本地视频帧提取工具，专为推特创作者与素材切片优化。<br /><br />
-                            支持 FFmpeg 格式修复、AI 智能人像锁定，无损批量提取高质量视频画面，彻底告别模糊废片。
+                        <div className="grid grid-cols-2 gap-4 text-[11px] leading-relaxed">
+                            <div className="flex flex-col gap-1.5 bg-white/5 p-3 rounded-xl border border-white/5">
+                                <span className="text-zinc-500 font-bold uppercase tracking-wider text-[9px]">操作快捷键</span>
+                                <div className="text-zinc-300 space-y-1">
+                                    <p><span className="text-indigo-400 font-mono">空格</span> 播放/暂停</p>
+                                    <p><span className="text-indigo-400 font-mono">S</span> 单张截图</p>
+                                    <p><span className="text-indigo-400 font-mono">I / O</span> 设置区间始末</p>
+                                    <p><span className="text-indigo-400 font-mono">← / →</span> 逐帧步进 (长按匀速)</p>
+                                </div>
+                            </div>
+                            <div className="flex flex-col gap-1.5 bg-white/5 p-3 rounded-xl border border-white/5">
+                                <span className="text-zinc-500 font-bold uppercase tracking-wider text-[9px]">使用提示</span>
+                                <div className="text-zinc-300 space-y-1">
+                                    <p>• 推荐张数下限为 <span className="text-indigo-400 font-mono">10</span> 张</p>
+                                    <p>• AI 模式建议锁定单一清晰目标</p>
+                                    <p>• 预览图双击可全屏沉浸浏览</p>
+                                    <p>• 预览时 <span className="text-indigo-400 font-mono">←/→</span> 切换，<span className="text-indigo-400 font-mono">Esc</span> 退出</p>
+                                </div>
+                            </div>
                         </div>
 
-                        <div className="h-px w-full bg-white/10 my-2"></div>
+                        <div className="h-px w-full bg-white/10 my-1"></div>
 
                         <div className="flex flex-col items-center gap-1">
-                            <span className="text-[10px] text-zinc-500">开源地址 (GitHub)</span>
+                            <span className="text-[10px] text-zinc-500">作者 哔站地址</span>
                             <a
                                 href="#"
-                                onClick={(e) => { e.preventDefault(); window.require('electron').shell.openExternal('https://github.com/qh775885/video-ppp'); }}
+                                onClick={(e) => { e.preventDefault(); window.require('electron').shell.openExternal('https://space.bilibili.com/248612618/upload/opus'); }}
                                 className="text-indigo-400 hover:text-indigo-300 hover:underline text-[11px] font-mono transition-colors"
                             >
-                                https://github.com/qh775885/video-ppp
+                                https://space.bilibili.com/248612618/upload/opus
                             </a>
                         </div>
                     </div>
