@@ -1,7 +1,7 @@
 # 视频截图神器
 一款基于 React + Electron 的视频截图与自动提取工具。
 
-<img width="1150" height="866" alt="QQ20260221-191718" src="https://github.com/user-attachments/assets/7f42c901-5630-4999-9598-299a2af6af62" />
+
 
 ## 功能
 - 拖入或点击导入视频，支持 MP4 / MKV / TS / AVI / MOV 等格式
