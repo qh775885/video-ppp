@@ -75,6 +75,87 @@ const computeDHash = (canvas) => {
     return hash;
 };
 
+// ====== 有效画面检测：过滤黑屏、片头 logo、内容占比过低的帧 ======
+const analyzeFrameContent = (canvas) => {
+    const scale = Math.min(1, 96 / canvas.width);
+    const w = Math.max(24, Math.round(canvas.width * scale));
+    const h = Math.max(24, Math.round(canvas.height * scale));
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = w;
+    tmpCanvas.height = h;
+    const ctx = tmpCanvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+
+    let darkPixels = 0;
+    let activePixels = 0;
+    let lumaSum = 0;
+    let centerActivePixels = 0;
+    let textLikePixels = 0;
+
+    const centerLeft = Math.floor(w * 0.2);
+    const centerRight = Math.ceil(w * 0.8);
+    const centerTop = Math.floor(h * 0.22);
+    const centerBottom = Math.ceil(h * 0.78);
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const i = y * w + x;
+            const idx = i * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        const luma = r * 0.299 + g * 0.587 + b * 0.114;
+        lumaSum += luma;
+
+        if (luma < 18) darkPixels++;
+
+        const spread = Math.max(r, g, b) - Math.min(r, g, b);
+        const isActive = luma > 26 || spread > 22;
+        if (isActive) {
+            activePixels++;
+        }
+
+            const inCenter = x >= centerLeft && x < centerRight && y >= centerTop && y < centerBottom;
+            if (inCenter && isActive) {
+                centerActivePixels++;
+            }
+
+            if (inCenter && luma > 155 && spread < 36) {
+                textLikePixels++;
+            }
+        }
+    }
+
+    const total = w * h;
+    const darkRatio = darkPixels / total;
+    const activeRatio = activePixels / total;
+    const avgLuma = lumaSum / total;
+    const centerArea = (centerRight - centerLeft) * (centerBottom - centerTop);
+    const centerActiveRatio = centerArea > 0 ? centerActivePixels / centerArea : 0;
+    const textLikeRatio = centerArea > 0 ? textLikePixels / centerArea : 0;
+    const overlayPenalty = Math.min(1, textLikeRatio * 10 + Math.max(0, 0.12 - centerActiveRatio) * 2.5);
+    const looksLikeIntroOverlay = (darkRatio > 0.72 && textLikeRatio > 0.035) || (textLikeRatio > 0.08 && centerActiveRatio < 0.22);
+    const isUsable = darkRatio < 0.94 && activeRatio > 0.08 && avgLuma > 10 && !looksLikeIntroOverlay;
+
+    return { darkRatio, activeRatio, avgLuma, centerActiveRatio, textLikeRatio, overlayPenalty, looksLikeIntroOverlay, isUsable };
+};
+
+const computeSelectionScore = ({ sharpness, activeRatio, darkRatio, centerActiveRatio, overlayPenalty }) => {
+    return Math.log1p(Math.max(0, sharpness)) * 0.55
+        + activeRatio * 140
+        + centerActiveRatio * 100
+        - darkRatio * 30
+        - overlayPenalty * 65;
+};
+
+const getSharpnessFloor = (values) => {
+    if (!values || values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = Math.max(0, Math.floor(sorted.length * 0.35) - 1);
+    return Math.max(55, sorted[idx]);
+};
+
 // ====== Hamming 距离：两个哈希有多少位不同（越大越不同） ======
 const hashDistance = (a, b) => {
     let dist = 0;
@@ -105,6 +186,15 @@ const loadImageFromPath = (filePath) => {
         } catch (err) {
             reject(new Error(`Failed to read image file: ${filePath} - ${err.message}`));
         }
+    });
+};
+
+const loadImageFromUrl = (url) => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error(`Failed to load image from url: ${url}`));
+        img.src = url;
     });
 };
 
@@ -140,6 +230,8 @@ function App() {
     const [extractElapsed, setExtractElapsed] = useState(0); // 提取用时（秒）
     const [extractStatus, setExtractStatus] = useState(''); // 提取阶段文字
     const extractTimerRef = useRef(null);
+    const [captureNotice, setCaptureNotice] = useState('');
+    const captureNoticeTimerRef = useRef(null);
 
     // --- New AI / Advanced State ---
     const [isVideoLoading, setIsVideoLoading] = useState(false);
@@ -150,20 +242,30 @@ function App() {
     const isDetectingRef = useRef(false);
     const lastTrackedOffsetRef = useRef(0);
     const manualLockTargetRef = useRef(null); // Used for "Mode B: Manual Overridden Lock"
+    const aiLoadPromiseRef = useRef(null);
 
     // Load AI Model ON-DEMAND, completely eliminating any startup CPU spike or drag freezes
     const loadAiModel = () => {
-        if (!aiModel && !isAiLoading) {
-            setIsAiLoading(true);
-            import('@tensorflow/tfjs').then(() => {
-                import('@tensorflow-models/coco-ssd').then(cocoSsd => {
-                    cocoSsd.load({ base: 'lite_mobilenet_v2' }).then(model => {
-                        setAiModel(model);
-                        setIsAiLoading(false);
-                    });
-                });
+        if (aiModel) return Promise.resolve(aiModel);
+        if (aiLoadPromiseRef.current) return aiLoadPromiseRef.current;
+
+        setIsAiLoading(true);
+        aiLoadPromiseRef.current = import('@tensorflow/tfjs')
+            .then(() => import('@tensorflow-models/coco-ssd'))
+            .then(cocoSsd => cocoSsd.load({ base: 'lite_mobilenet_v2' }))
+            .then(model => {
+                setAiModel(model);
+                setIsAiLoading(false);
+                aiLoadPromiseRef.current = null;
+                return model;
+            })
+            .catch(err => {
+                setIsAiLoading(false);
+                aiLoadPromiseRef.current = null;
+                throw err;
             });
-        }
+
+        return aiLoadPromiseRef.current;
     };
 
     // Toggle logic now intercepts and loads model
@@ -238,6 +340,17 @@ function App() {
         // Reverse calc multiplier for display? nah, keep it simple.
     };
 
+    const showCaptureNotice = (text) => {
+        if (captureNoticeTimerRef.current) {
+            clearTimeout(captureNoticeTimerRef.current);
+        }
+        setCaptureNotice(text);
+        captureNoticeTimerRef.current = setTimeout(() => {
+            setCaptureNotice('');
+            captureNoticeTimerRef.current = null;
+        }, 1400);
+    };
+
     const handleClear = (deleteLocal = false) => {
         if (deleteLocal && cacheDir && videoFile) {
             try {
@@ -261,6 +374,14 @@ function App() {
     useEffect(() => {
         const saved = localStorage.getItem('video-ppp-cache-dir');
         if (saved) setCacheDir(saved);
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (captureNoticeTimerRef.current) {
+                clearTimeout(captureNoticeTimerRef.current);
+            }
+        };
     }, []);
 
     const handleSelectCache = async () => {
@@ -595,13 +716,33 @@ function App() {
                 }
 
                 setFrames(prev => [...prev, newFrame]);
+                showCaptureNotice(newFrame.filePath ? '已截图并保存' : '已截图（未设置保存目录）');
                 resolve();
             }, 'image/jpeg', 0.95);
         });
     };
 
+    const revokeFrames = (items) => {
+        for (const item of items) {
+            if (item?.url?.startsWith('blob:')) {
+                URL.revokeObjectURL(item.url);
+            }
+        }
+    };
+
+    const handleDeleteFrame = (frameId) => {
+        setFrames(prev => {
+            const target = prev.find(frame => frame.id === frameId);
+            if (target?.url?.startsWith('blob:')) {
+                URL.revokeObjectURL(target.url);
+            }
+            return prev.filter(frame => frame.id !== frameId);
+        });
+    };
+
     // ====== v2.0.9 直接复用 Canvas 保存帧（跳过 re-seek） ======
-    const saveCanvasAsFrame = async (canvas, time) => {
+    const saveCanvasAsFrame = async (canvas, time, options = {}) => {
+        const { isPortrait = !!portraitRatio, ratio = portraitRatio || "16:9", append = true } = options;
         return new Promise((resolve) => {
             canvas.toBlob(async (blob) => {
                 if (!blob) { resolve(); return; }
@@ -609,8 +750,8 @@ function App() {
                 const newFrame = {
                     id: Date.now() + Math.random(),
                     url, time, blob,
-                    isPortrait: !!portraitRatio,
-                    ratio: portraitRatio || "16:9",
+                    isPortrait,
+                    ratio,
                     filePath: null
                 };
                 if (cacheDir && videoFile) {
@@ -632,14 +773,15 @@ function App() {
                         newFrame.filePath = fullPath;
                     } catch (err) { console.error("Auto-save failed:", err); }
                 }
-                setFrames(prev => [...prev, newFrame]);
-                resolve();
+                if (append) {
+                    setFrames(prev => [...prev, newFrame]);
+                }
+                resolve(newFrame);
             }, 'image/jpeg', 0.95);
         });
     };
 
-    // ====== v2.1.1 智能提取：动态策略选择 + dHash 去重 ======
-    const handleSmartExtract = async () => {
+    const handleSelectFrames = async () => {
         if (!videoRefVal || isExtracting) return;
         setIsExtracting(true);
         setExtractElapsed(0);
@@ -660,17 +802,8 @@ function App() {
         }
 
         const segmentDuration = activeDuration / targetCount;
-        const OVERSAMPLE = segmentDuration < 2 ? 2 : segmentDuration < 5 ? 3 : 4;
-        let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
-
-        // ====== 动态策略选择：预估两种方案耗时，选更快的 ======
-        const seekCostPerSeg = fps > 40 ? 0.5 : 0.3;  // 实测：30fps≈0.3s，60fps≈0.5s
-        const seekEstimate = targetCount * seekCostPerSeg;
-        // 扫描公式校准：解码成本 ∝ 时长×帧率，后处理 ∝ 候选总数
-        const totalCandidates = targetCount * OVERSAMPLE;
-        const scanEstimate = activeDuration * (fps / 30) * 0.025 + totalCandidates * 0.03;
-        const useSegmentSeek = seekEstimate < scanEstimate;
-        const DHASH_THRESHOLD = fps > 40 ? 25 : 20; // 高帧率视频要求更大差异
+        const sampleFps = Math.min(12, Math.max(2, targetCount / Math.max(activeDuration, 1) * 4));
+        const DHASH_THRESHOLD = fps > 40 ? 25 : 20;
 
         const { ipcRenderer } = window.require('electron');
         const fsNode = window.require('fs');
@@ -682,33 +815,14 @@ function App() {
             const videoPath = videoFile.loadedPath || videoFile.path;
             if (!videoPath) throw new Error('No video file path available');
 
-            let framePaths;
-
-            if (useSegmentSeek) {
-                // ====== 模式 A：分段精准 seek（≤30张） ======
-                const segments = [];
-                for (let seg = 0; seg < targetCount; seg++) {
-                    const segStart = effectiveStart + seg * segmentDuration;
-                    segments.push({ seekTime: segStart, framesNeeded: OVERSAMPLE });
-                }
-                setExtractStatus(`精准提取 (${segments.length} 段)...`);
-                framePaths = await ipcRenderer.invoke('extract-frames-batch', {
-                    filePath: videoPath,
-                    segments,
-                    outputDir: tempDir
-                });
-            } else {
-                // ====== 模式 B：全段扫描（>30张） ======
-                const totalCandidates = targetCount * OVERSAMPLE;
-                setExtractStatus('全段扫描中...');
-                framePaths = await ipcRenderer.invoke('extract-frames', {
-                    filePath: videoPath,
-                    startTime: effectiveStart,
-                    duration: activeDuration,
-                    fps: totalCandidates / activeDuration,
-                    outputDir: tempDir
-                });
-            }
+            setExtractStatus('FFmpeg 候选筛帧中...');
+            const framePaths = await ipcRenderer.invoke('extract-frames-smart', {
+                filePath: videoPath,
+                startTime: effectiveStart,
+                duration: activeDuration,
+                fps: sampleFps,
+                outputDir: tempDir
+            });
 
             if (!framePaths || framePaths.length === 0) {
                 throw new Error('FFmpeg extracted 0 frames');
@@ -716,82 +830,54 @@ function App() {
 
             // ====== 分段优选 + 跨段 dHash 去重 ======
             setExtractStatus('分析优选中...');
+            const sampleInterval = activeDuration / framePaths.length;
+            const candidates = [];
+            for (let i = 0; i < framePaths.length; i++) {
+                const timeToCapture = effectiveStart + i * sampleInterval;
+                if (timeToCapture > effectiveEnd) break;
+                setExtractStatus(`分析帧 ${i + 1}/${framePaths.length}`);
+                const img = await loadImageFromPath(framePaths[i]);
+                const canvas = cropFrameToCanvas(img, 0, false);
+                const sharpness = computeSharpness(canvas);
+                const hash = computeDHash(canvas);
+                const content = analyzeFrameContent(canvas);
+                if (!content.isUsable) continue;
+                candidates.push({ time: timeToCapture, canvas, sharpness, offset: 0, hash, ...content, selectionScore: computeSelectionScore({ sharpness, ...content }) });
+            }
+
             const finalFrames = [];
             let lastHash = null;
-
-            if (useSegmentSeek) {
-                // 模式 A：按文件名前缀分组
-                let frameIdx = 0;
-                for (let seg = 0; seg < targetCount; seg++) {
-                    const segStart = effectiveStart + seg * segmentDuration;
-                    const segFramePaths = [];
-                    for (let k = 0; k < OVERSAMPLE && frameIdx < framePaths.length; k++, frameIdx++) {
-                        const expectedPrefix = `seg${String(seg).padStart(4, '0')}`;
-                        const fileName = pathNode.basename(framePaths[frameIdx]);
-                        if (fileName.startsWith(expectedPrefix)) {
-                            segFramePaths.push(framePaths[frameIdx]);
-                        } else {
-                            frameIdx--;
-                            break;
-                        }
-                    }
-                    if (segFramePaths.length === 0) continue;
-
-                    setExtractStatus(`分析段 ${seg + 1}/${targetCount}`);
-                    const ranked = await pickRankedFrames(segFramePaths, segStart, segmentDuration);
-                    // 跨段去重：选与前一帧差异最大的候选
-                    const picked = pickDiverseFrame(ranked, lastHash);
-                    if (picked) {
-                        finalFrames.push(picked);
-                        lastHash = picked.hash;
-                    }
-                }
-            } else {
-                // 模式 B：按时间区间分组
-                const sampleInterval = activeDuration / framePaths.length;
-                const candidates = [];
-                for (let i = 0; i < framePaths.length; i++) {
-                    const timeToCapture = effectiveStart + i * sampleInterval;
-                    if (timeToCapture > effectiveEnd) break;
-                    setExtractStatus(`分析帧 ${i + 1}/${framePaths.length}`);
-                    const img = await loadImageFromPath(framePaths[i]);
-
-                    let frameOffset = autoTrack ? trackingOffset : cropOffset;
-                    if (autoTrack && aiModel && portraitRatio) {
-                        try {
-                            const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
-                            if (result !== null) { trackingOffset = result; frameOffset = result; }
-                        } catch (err) { console.error('AI detect failed:', err); }
-                    }
-
-                    const canvas = cropToCanvas(img, frameOffset);
-                    const sharpness = computeSharpness(canvas);
-                    const hash = computeDHash(canvas);
-                    candidates.push({ time: timeToCapture, canvas, sharpness, offset: frameOffset, hash });
-                }
-
-                for (let seg = 0; seg < targetCount; seg++) {
-                    const segStart = effectiveStart + seg * segmentDuration;
-                    const segEnd = segStart + segmentDuration;
-                    const segFrames = candidates.filter(c => c.time >= segStart && c.time < segEnd);
-                    if (segFrames.length > 0) {
-                        segFrames.sort((a, b) => b.sharpness - a.sharpness);
-                        const picked = pickDiverseFrame(segFrames, lastHash);
-                        if (picked) {
-                            finalFrames.push(picked);
-                            lastHash = picked.hash;
-                        }
-                    }
+            const sharpnessFloor = getSharpnessFloor(candidates.map(item => item.sharpness));
+            for (let seg = 0; seg < targetCount; seg++) {
+                const segStart = effectiveStart + seg * segmentDuration;
+                const segEnd = segStart + segmentDuration;
+                const segFrames = candidates.filter(c => c.time >= segStart && c.time < segEnd);
+                if (segFrames.length === 0) continue;
+                const clearFrames = segFrames.filter(frame => frame.sharpness >= sharpnessFloor);
+                if (clearFrames.length === 0) continue;
+                const rankedFrames = rankFramesForSelection(clearFrames);
+                const picked = pickDiverseFrame(rankedFrames, lastHash);
+                if (picked) {
+                    finalFrames.push(picked);
+                    lastHash = picked.hash;
                 }
             }
 
             // ====== 输出 ======
-            setExtractStatus('保存中...');
+            setExtractStatus('保存优选帧...');
             finalFrames.sort((a, b) => a.time - b.time);
-
+            revokeFrames(frames);
+            const nextFrames = [];
             for (const frame of finalFrames) {
-                await saveCanvasAsFrame(frame.canvas, frame.time);
+                const savedFrame = await saveCanvasAsFrame(frame.canvas, frame.time, {
+                    isPortrait: false,
+                    ratio: '原图',
+                    append: false
+                });
+                if (savedFrame) nextFrames.push(savedFrame);
             }
+            setFrames(nextFrames);
+            showCaptureNotice(nextFrames.length > 0 ? `已优选 ${nextFrames.length} 张` : '未选出可用帧');
 
         } catch (err) {
             console.error('FFmpeg extraction failed:', err);
@@ -810,57 +896,12 @@ function App() {
         setExtractStatus('');
         setIsExtracting(false);
 
-        // ====== 内部辅助：裁切图片到 Canvas ======
-        function cropToCanvas(img, frameOffset) {
-            const vWidth = img.naturalWidth || img.width;
-            const vHeight = img.naturalHeight || img.height;
-            let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
-
-            if (portraitRatio) {
-                const ratioParts = portraitRatio.split(':');
-                const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-                const targetWidth = vHeight * targetAspect;
-                if (targetWidth <= vWidth) {
-                    sWidth = targetWidth;
-                    const maxOff = (vWidth - sWidth) / 2;
-                    sx = (vWidth - sWidth) / 2 + frameOffset * maxOff;
-                } else {
-                    sHeight = vWidth / targetAspect;
-                    sy = (vHeight - sHeight) / 2;
-                }
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = sWidth;
-            canvas.height = sHeight;
-            canvas.getContext('2d').drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
-            return canvas;
-        }
-
         // ====== 内部辅助：从候选帧中返回按清晰度排序的列表（含 hash） ======
-        async function pickRankedFrames(paths, segStart, segDur) {
-            const results = [];
-
-            for (let k = 0; k < paths.length; k++) {
-                const frameTime = segStart + (k / Math.max(1, paths.length - 1)) * segDur * 0.8;
-                const img = await loadImageFromPath(paths[k]);
-
-                let frameOffset = autoTrack ? trackingOffset : cropOffset;
-                if (autoTrack && aiModel && portraitRatio) {
-                    try {
-                        const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
-                        if (result !== null) { trackingOffset = result; frameOffset = result; }
-                    } catch (err) { console.error('AI detect failed:', err); }
-                }
-
-                const canvas = cropToCanvas(img, frameOffset);
-                const sharpness = computeSharpness(canvas);
-                const hash = computeDHash(canvas);
-                results.push({ time: frameTime, canvas, sharpness, offset: frameOffset, hash });
-            }
-
-            results.sort((a, b) => b.sharpness - a.sharpness);
-            return results;
+        function rankFramesForSelection(items) {
+            return [...items].sort((a, b) => {
+                if (a.isUsable !== b.isUsable) return a.isUsable ? -1 : 1;
+                return (b.selectionScore ?? 0) - (a.selectionScore ?? 0);
+            });
         }
 
         // ====== 内部辅助：跨段去重选帧 ======
@@ -878,6 +919,89 @@ function App() {
             return ranked[0];
         }
     };
+
+    const handlePortraitProcess = async () => {
+        if (isExtracting || frames.length === 0 || !portraitRatio) return;
+        setIsExtracting(true);
+        setExtractElapsed(0);
+        setExtractStatus('竖图处理中...');
+        const processStartTime = Date.now();
+        extractTimerRef.current = setInterval(() => {
+            setExtractElapsed(Math.round((Date.now() - processStartTime) / 1000));
+        }, 500);
+
+        let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+
+        try {
+            if (autoTrack && !aiModel) {
+                loadAiModel();
+                setExtractStatus('等待 AI 加载...');
+                return;
+            }
+
+            const nextFrames = [];
+            for (let i = 0; i < frames.length; i++) {
+                setExtractStatus(`竖图处理 ${i + 1}/${frames.length}`);
+                const frame = frames[i];
+                const img = await loadImageFromUrl(frame.url);
+                let frameOffset = autoTrack ? trackingOffset : cropOffset;
+                if (autoTrack && aiModel) {
+                    try {
+                        const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                        if (result !== null) {
+                            trackingOffset = result;
+                            frameOffset = result;
+                        }
+                    } catch (err) {
+                        console.error('AI detect failed:', err);
+                    }
+                }
+
+                const canvas = cropFrameToCanvas(img, frameOffset, true);
+                const savedFrame = await saveCanvasAsFrame(canvas, frame.time, {
+                    isPortrait: true,
+                    ratio: portraitRatio,
+                    append: false
+                });
+                if (savedFrame) nextFrames.push(savedFrame);
+            }
+
+            revokeFrames(frames);
+            setFrames(nextFrames);
+            showCaptureNotice(nextFrames.length > 0 ? `已处理 ${nextFrames.length} 张竖图` : '未生成竖图');
+        } finally {
+            if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
+            setExtractElapsed(Math.round((Date.now() - processStartTime) / 1000));
+            setExtractStatus('');
+            setIsExtracting(false);
+        }
+    };
+
+    function cropFrameToCanvas(img, frameOffset, usePortraitCrop) {
+        const vWidth = img.naturalWidth || img.width;
+        const vHeight = img.naturalHeight || img.height;
+        let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
+
+        if (usePortraitCrop && portraitRatio) {
+            const ratioParts = portraitRatio.split(':');
+            const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
+            const targetWidth = vHeight * targetAspect;
+            if (targetWidth <= vWidth) {
+                sWidth = targetWidth;
+                const maxOff = (vWidth - sWidth) / 2;
+                sx = (vWidth - sWidth) / 2 + frameOffset * maxOff;
+            } else {
+                sHeight = vWidth / targetAspect;
+                sy = (vHeight - sHeight) / 2;
+            }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = sWidth;
+        canvas.height = sHeight;
+        canvas.getContext('2d').drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+        return canvas;
+    }
 
     // 使用 stateRef 持久化最新状态，彻底避免 React 渲染销毁事件监听引起的“长按断触”问题
     const stateRef = useRef({ videoRefVal, duration, fps, seekStep, togglePlay, captureFrame, handleSetStart, handleSetEnd, handleSeek });
@@ -974,28 +1098,41 @@ function App() {
             if (e.target.tagName === 'INPUT') return;
             if (e.button === 3 || e.button === 4) {
                 e.preventDefault();
-                startSeek(e.button === 4 ? 1 : -1);
+                e.stopPropagation();
+                startSeek(e.button === 3 ? 1 : -1);
             }
         };
 
         const handleMouseUpExtra = (e) => {
             if (e.button === 3 || e.button === 4) {
                 e.preventDefault();
+                e.stopPropagation();
                 stopSeek();
             }
         };
 
-        window.addEventListener('keydown', handleKeyDown);
-        window.addEventListener('keyup', handleKeyUp);
-        window.addEventListener('mousedown', handleMouseDown);
-        window.addEventListener('mouseup', handleMouseUpExtra);
+        const handleAuxClick = (e) => {
+            if (e.button === 3 || e.button === 4) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown, true);
+        window.addEventListener('keyup', handleKeyUp, true);
+        window.addEventListener('mousedown', handleMouseDown, true);
+        window.addEventListener('mouseup', handleMouseUpExtra, true);
+        window.addEventListener('auxclick', handleAuxClick, true);
+        window.addEventListener('blur', stopSeek);
 
         return () => {
             stopSeek();
-            window.removeEventListener('keydown', handleKeyDown);
-            window.removeEventListener('keyup', handleKeyUp);
-            window.removeEventListener('mousedown', handleMouseDown);
-            window.removeEventListener('mouseup', handleMouseUpExtra);
+            window.removeEventListener('keydown', handleKeyDown, true);
+            window.removeEventListener('keyup', handleKeyUp, true);
+            window.removeEventListener('mousedown', handleMouseDown, true);
+            window.removeEventListener('mouseup', handleMouseUpExtra, true);
+            window.removeEventListener('auxclick', handleAuxClick, true);
+            window.removeEventListener('blur', stopSeek);
         };
     }, []); // <-- 依赖数组为空！初始化执行一次，靠 stateRef 穿透状态
 
@@ -1008,6 +1145,14 @@ function App() {
                         <Loader2 className="animate-spin text-indigo-500" size={48} />
                         <div className="font-bold tracking-widest text-lg">FFmpeg 底层媒体引擎处理中...</div>
                         <div className="text-zinc-400 text-sm">正在修复视频封装与编码兼容性</div>
+                    </div>
+                </div>
+            )}
+
+            {captureNotice && !isVideoLoading && !isExtracting && (
+                <div className="absolute top-6 left-1/2 z-50 -translate-x-1/2 pointer-events-none">
+                    <div className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 shadow-[0_8px_30px_rgba(16,185,129,0.18)] backdrop-blur-md">
+                        {captureNotice}
                     </div>
                 </div>
             )}
@@ -1083,7 +1228,9 @@ function App() {
                             isExtracting={isExtracting}
                             extractElapsed={extractElapsed}
                             extractStatus={extractStatus}
-                            onExtract={handleSmartExtract}
+                            framesCount={frames.length}
+                            onSelectFrames={handleSelectFrames}
+                            onPortraitProcess={handlePortraitProcess}
                         />
                     </div>
                 )}
@@ -1093,6 +1240,7 @@ function App() {
             <Sidebar
                 frames={frames}
                 onClear={handleClear}
+                onDeleteFrame={handleDeleteFrame}
                 onDownload={handleDownload}
                 cacheDir={cacheDir}
                 onSelectCacheDir={handleSelectCache}
@@ -1112,7 +1260,7 @@ function FloatingCockpit({
     autoTrack, onToggleAutoTrack, aiModelReady, isAiLoading,
     targetCount, onTargetCountChange,
     multiplier, onMultiplierChange,
-    isExtracting, extractElapsed, extractStatus, onExtract
+    isExtracting, extractElapsed, extractStatus, framesCount, onSelectFrames, onPortraitProcess
 }) {
     // Local State for Range Mode Toggle
     // We lift this up if App needs to know, but for UI visibility, local is fine.
@@ -1300,89 +1448,47 @@ function FloatingCockpit({
                 <span className="font-mono text-xs text-zinc-500 min-w-[44px] font-medium">{formatTime(duration)}</span>
             </div>
 
-            {/* 2. Control Bar (Flex Layout to prevent crowding) */}
-            <div className="flex items-center justify-between gap-4">
+            {/* 2. Control Bar */}
+            <div className="flex items-center gap-3 rounded-[20px] bg-[#0a0a0b]/78 border border-white/8 shadow-[0_16px_40px_rgba(0,0,0,0.35)] ring-1 ring-white/5 px-4 py-3">
 
                 {/* Left: Transport Controls */}
                 <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={onTogglePlay} className={`${btnGlass} w-10 shrink-0`} title={isPlaying ? "暂停 Space" : "播放 Space"}>
+                    <button onClick={onTogglePlay} className={`${btnGlass} w-11 h-11 shrink-0`} title={isPlaying ? "暂停 Space" : "播放 Space"}>
                         {isPlaying ? <Pause size={18} className="fill-current" /> : <Play size={18} className="fill-current ml-0.5" />}
                     </button>
 
-                    {/* Seek Step */}
-                    <div className="h-9 px-3 flex items-center gap-2 rounded-xl bg-white/5 border border-white/5 text-xs text-zinc-400 group focus-within:border-white/20 transition-colors">
+                    <div className="h-11 px-3 flex items-center gap-2 rounded-xl bg-white/5 border border-white/5 text-xs text-zinc-400 group focus-within:border-white/20 transition-colors shrink-0">
                         <FastForward size={14} />
-                        <span className="text-[10px] font-bold">步进</span>
+                        <span className="text-[10px] font-bold whitespace-nowrap">步进</span>
                         <input
                             type="number"
                             className="w-8 bg-transparent text-center font-mono font-bold focus:outline-none text-zinc-200"
                             value={seekStep}
                             onChange={(e) => onSeekStepChange(Number(e.target.value))}
                         />
-                        <span className="text-[10px]">帧</span>
+                        <span className="text-[10px] whitespace-nowrap">帧</span>
                     </div>
                 </div>
 
-                {/* Center: Modes */}
-                <div className="flex items-center justify-center gap-2 overflow-x-auto no-scrollbar mask-edges shrink-0">
+                <div className="flex-1"></div>
+
+                {/* Middle: Range */}
+                <div className="flex items-center justify-center shrink-0">
                     <button
                         onClick={toggleRangeMode}
-                        className={`h-9 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border whitespace-nowrap shrink-0 ${isRangeMode ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
+                        className={`h-11 px-5 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border whitespace-nowrap ${isRangeMode ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-white/5 border-white/5 text-zinc-500 hover:text-zinc-300 hover:bg-white/10'}`}
                     >
                         <ScanLine size={16} />
                         <span>区间</span>
                     </button>
-
-                    <div className="w-px h-4 bg-white/10 mx-1"></div>
-
-                    <div className="flex bg-black/40 rounded-xl border border-white/5 p-0.5 overflow-hidden">
-                        {/* Quick Switch Toggles for Crop Ratios */}
-                        <div className="flex items-center gap-0.5">
-                            {['9:16', '3:4', '4:5'].map(ratio => (
-                                <button
-                                    key={ratio}
-                                    onClick={() => onSetPortraitMode(ratio)}
-                                    className={`h-8 px-2.5 rounded-lg flex items-center justify-center text-xs font-bold font-mono transition-all ${portraitRatio === ratio
-                                        ? 'bg-purple-500/30 text-purple-300 shadow-md ring-1 ring-purple-500/50'
-                                        : 'bg-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
-                                        }`}
-                                >
-                                    {portraitRatio === ratio && <Scissors size={12} className="mr-1" />}
-                                    {ratio}
-                                </button>
-                            ))}
-                        </div>
-
-                        {/* Auto Track sub-button */}
-                        {portraitRatio && (
-                            <button
-                                onClick={onToggleAutoTrack}
-                                disabled={isAiLoading}
-                                className={`h-8 px-3 ml-0.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold whitespace-nowrap shrink-0 transition-all ${autoTrack ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]'
-                                    : 'bg-white/5 text-indigo-300/80 hover:text-indigo-200 hover:bg-white/10'
-                                    }`}
-                            >
-                                {isAiLoading ? (
-                                    <>
-                                        <Loader2 size={12} className="animate-spin opacity-80" />
-                                        <span className="opacity-80 text-[11px] font-mono tracking-widest">框架加载中...</span>
-                                    </>
-                                ) : (
-                                    <span className={!aiModelReady ? "opacity-70" : ""}>
-                                        {autoTrack ? 'AI 锁定已开' : '开启 AI 锁定'}
-                                    </span>
-                                )}
-                            </button>
-                        )}
-                    </div>
                 </div>
 
-                {/* Right: Extraction Panel */}
-                <div className="flex items-center h-[48px] px-1 rounded-xl bg-[#0a0a0b]/80 border border-white/10 shadow-2xl backdrop-blur-xl ring-1 ring-white/5 mx-0">
+                <div className="flex-1"></div>
 
-                    {/* 1. Left: Max Count (Upper Limit) */}
-                    <div className="flex flex-col items-center justify-center w-[44px]">
-                        <span className="text-[9px] text-zinc-500 font-medium select-none tracking-tight leading-none mb-0.5">≤上限</span>
+                {/* Right: Select Panel */}
+                <div className="flex items-center h-11 px-2 rounded-xl bg-black/35 border border-white/10 shadow-inner ring-1 ring-white/5 shrink-0">
+                    <div className="flex flex-col items-center justify-center w-[50px] px-1">
+                        <span className="text-[9px] text-zinc-500 font-medium leading-none mb-1">≤上限</span>
                         <input
                             type="number"
                             value={targetCount}
@@ -1392,41 +1498,24 @@ function FloatingCockpit({
                         />
                     </div>
 
-                    {/* Divider */}
-                    <div className="w-px h-5 bg-white/5"></div>
+                    <div className="w-px h-6 bg-white/6 mx-1"></div>
 
-                    {/* 2. Center: Extract Button (Ratio: ~2) */}
-                    <div className="flex items-center justify-center px-1.5 w-[100px]">
-                        <button
-                            onClick={onExtract}
-                            disabled={isExtracting}
-                            className={`group relative w-full h-8 rounded-lg font-bold transition-all duration-300 flex items-center justify-center gap-1 overflow-hidden ring-1 ring-inset ${isExtracting
-                                ? 'bg-zinc-800 text-zinc-500 ring-white/5 cursor-not-allowed'
-                                : 'bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_10px_rgba(79,70,229,0.3),inset_0_1px_1px_rgba(255,255,255,0.3)] ring-white/10 hover:shadow-[0_4px_15px_rgba(79,70,229,0.4),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:scale-[1.02] active:scale-[0.98]'
-                                }`}
-                        >
-                            {/* Inner Shine Effect */}
-                            {!isExtracting && <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>}
+                    <button
+                        onClick={onSelectFrames}
+                        disabled={isExtracting}
+                        className={`group relative h-9 min-w-[96px] px-4 rounded-lg font-bold transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden ring-1 ring-inset ${isExtracting
+                            ? 'bg-zinc-800 text-zinc-500 ring-white/5 cursor-not-allowed'
+                            : 'bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_10px_rgba(79,70,229,0.3),inset_0_1px_1px_rgba(255,255,255,0.3)] ring-white/10 hover:shadow-[0_4px_15px_rgba(79,70,229,0.4),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:scale-[1.02] active:scale-[0.98]'
+                            }`}
+                    >
+                        {!isExtracting && <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>}
+                        {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <><Zap size={13} className="fill-current drop-shadow-sm" /><span className="text-xs tracking-wide drop-shadow-sm">优选</span></>}
+                    </button>
 
-                            {isExtracting ? (
-                                <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                                <>
-                                    <Zap size={13} className="fill-current drop-shadow-sm" />
-                                    <span className="text-xs tracking-wide drop-shadow-sm">提取</span>
-                                </>
-                            )}
-                        </button>
-                    </div>
+                    <div className="w-px h-6 bg-white/6 mx-1"></div>
 
-                    {/* Divider */}
-                    <div className="w-px h-5 bg-white/5"></div>
-
-                    {/* 3. Right: Duration / Elapsed Timer */}
-                    <div className="flex items-center justify-center w-[40px]">
-                        <div className={`text-[10px] font-mono font-bold leading-none transition-colors ${isExtracting ? 'text-amber-400 animate-pulse' : extractElapsed > 0 ? 'text-emerald-400' : 'text-indigo-300'}`}>
-                            {isExtracting ? `${extractElapsed}s` : extractElapsed > 0 ? `${extractElapsed}s` : `${Math.floor(extractDuration)}s`}
-                        </div>
+                    <div className={`w-[42px] text-center text-[10px] font-mono font-bold leading-none transition-colors ${isExtracting ? 'text-amber-400 animate-pulse' : extractElapsed > 0 ? 'text-emerald-400' : 'text-indigo-300'}`}>
+                        {isExtracting ? `${extractElapsed}s` : extractElapsed > 0 ? `${extractElapsed}s` : `${Math.floor(extractDuration)}s`}
                     </div>
                 </div>
             </div>

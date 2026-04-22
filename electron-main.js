@@ -6,6 +6,9 @@ const ffprobePath = require('ffprobe-static');
 const os = require('os');
 const fs = require('fs');
 
+const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+const isDev = Boolean(devServerUrl);
+
 // Handling dev vs packed paths for ffmpeg/ffprobe
 const fixPath = (p) => p ? p.replace('app.asar', 'app.asar.unpacked') : '';
 ffmpeg.setFfmpegPath(fixPath(ffmpegPath));
@@ -35,9 +38,11 @@ function createWindow() {
         win.show();
     });
 
-    // Always load the built file since our 'dev' script is "vite build && electron ."
-    // This allows us to see changes without running a separate dev server.
-    win.loadFile(path.join(__dirname, 'dist/index.html'));
+    if (isDev) {
+        win.loadURL(devServerUrl);
+    } else {
+        win.loadFile(path.join(__dirname, 'dist/index.html'));
+    }
 
     // 方便调试：F12 打开/关闭 开发者工具
     win.webContents.on('before-input-event', (event, input) => {
@@ -177,6 +182,48 @@ ipcMain.handle('extract-frames', (event, { filePath, startTime, duration, fps: t
             })
             .on('error', (err, stdout, stderr) => {
                 reject(new Error(`FFmpeg extract-frames failed: ${err.message} | ${stderr || ''}`));
+            })
+            .run();
+    });
+});
+
+// FFmpeg 稳定优选候选：统一抽样后先做底层去重，减少重复帧
+ipcMain.handle('extract-frames-smart', (event, { filePath, startTime, duration, fps: targetFps, outputDir }) => {
+    return new Promise((resolve, reject) => {
+        if (!filePath) return reject(new Error('extract-frames-smart: no input file'));
+
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+
+        const outputPattern = path.join(outputDir, 'smart_%04d.jpg');
+
+        ffmpeg(filePath)
+            .seekInput(startTime)
+            .duration(duration)
+            .videoFilters([
+                `fps=${targetFps}`,
+                'mpdecimate'
+            ])
+            .outputOptions([
+                '-vsync vfr',
+                '-q:v 2',
+                '-an'
+            ])
+            .output(outputPattern)
+            .on('end', () => {
+                try {
+                    const files = fs.readdirSync(outputDir)
+                        .filter(f => f.startsWith('smart_') && f.endsWith('.jpg'))
+                        .sort()
+                        .map(f => path.join(outputDir, f));
+                    resolve(files);
+                } catch (readErr) {
+                    reject(new Error(`Failed to read smart frames: ${readErr.message}`));
+                }
+            })
+            .on('error', (err, stdout, stderr) => {
+                reject(new Error(`FFmpeg extract-frames-smart failed: ${err.message} | ${stderr || ''}`));
             })
             .run();
     });

@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Trash2, FolderOpen, Image as ImageIcon, Download, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Trash2, FolderOpen, Image as ImageIcon, Download, X, ChevronLeft, ChevronRight, Scissors } from 'lucide-react';
 import { version } from '../../package.json';
 
-export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDir }) {
+export function Sidebar({ frames, onClear, onDeleteFrame, onDownload, cacheDir, onSelectCacheDir }) {
     const [previewIndex, setPreviewIndex] = useState(-1); // -1 means closed
     const [isAboutOpen, setIsAboutOpen] = useState(false);
+    const [isPortraitWorkbenchOpen, setIsPortraitWorkbenchOpen] = useState(false);
+    const [portraitRatio, setPortraitRatio] = useState('3:4');
 
     // --- Lightbox Logic ---
     const handleNext = useCallback(() => {
@@ -41,6 +43,8 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
     }, [previewIndex, handleNext, handlePrev]);
 
     const currentFrame = previewIndex >= 0 ? frames[previewIndex] : null;
+    const hasHorizontalFrames = frames.some(frame => !frame.isPortrait);
+    const workbenchFrames = frames.filter(frame => !frame.isPortrait).slice(0, 6);
 
     return (
         <div className="flex flex-col h-full bg-zinc-950/90 backdrop-blur-xl border-l border-white/10 w-[320px]">
@@ -69,6 +73,15 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                 <div className="flex items-center justify-between mb-4 shrink-0">
                     <h3 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">图库</h3>
                     <div className="flex items-center gap-2">
+                        {hasHorizontalFrames && (
+                            <button
+                                onClick={() => setIsPortraitWorkbenchOpen(true)}
+                                className="flex items-center gap-1 text-[10px] text-purple-300 hover:text-white transition-colors px-2 py-1 rounded bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20"
+                            >
+                                <Scissors size={12} />
+                                横转竖
+                            </button>
+                        )}
                         <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-bold">
                             {frames.length}
                         </span>
@@ -121,6 +134,17 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                                         className="w-full h-full object-contain bg-black/40"
                                         alt={`Frame ${index}`}
                                     />
+
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onDeleteFrame(frame.id);
+                                        }}
+                                        className="absolute top-1 right-1 p-1 rounded-md bg-black/55 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-red-300 hover:bg-red-500/20 transition-all"
+                                        title="删除这张"
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
 
                                     {/* Overlay Info */}
                                     <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[8px] font-mono font-bold text-white border border-white/10 opacity-60 group-hover:opacity-100 transition-opacity">
@@ -206,14 +230,101 @@ export function Sidebar({ frames, onClear, onDownload, cacheDir, onSelectCacheDi
                         <div className="h-px w-full bg-white/10 my-1"></div>
 
                         <div className="flex flex-col items-center gap-1">
-                            <span className="text-[10px] text-zinc-500">作者 哔站地址</span>
+                            <span className="text-[10px] text-zinc-500">项目主页</span>
                             <a
                                 href="#"
-                                onClick={(e) => { e.preventDefault(); window.require('electron').shell.openExternal('https://space.bilibili.com/248612618/upload/opus'); }}
+                                onClick={(e) => { e.preventDefault(); window.require('electron').shell.openExternal('https://qh775885.github.io/video-ppp/'); }}
                                 className="text-indigo-400 hover:text-indigo-300 hover:underline text-[11px] font-mono transition-colors"
                             >
-                                https://space.bilibili.com/248612618/upload/opus
+                                https://qh775885.github.io/video-ppp/
                             </a>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {isPortraitWorkbenchOpen && createPortal(
+                <div
+                    className="fixed inset-0 z-[180] bg-black/80 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200"
+                    onClick={() => setIsPortraitWorkbenchOpen(false)}
+                >
+                    <div className="w-[780px] max-w-[92vw] bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-5 flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-white tracking-wide">横转竖操作台</h3>
+                                <p className="text-xs text-zinc-500 mt-1">先看叠加预览，再决定统一裁切比例。</p>
+                            </div>
+                            <button
+                                className="text-zinc-500 hover:text-white transition-colors"
+                                onClick={() => setIsPortraitWorkbenchOpen(false)}
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4 rounded-xl bg-black/30 border border-white/5 p-3">
+                            <div className="flex items-center gap-2">
+                                {['9:16', '3:4', '4:5'].map(ratio => (
+                                    <button
+                                        key={ratio}
+                                        onClick={() => setPortraitRatio(ratio)}
+                                        className={`h-9 px-4 rounded-xl text-xs font-bold font-mono transition-all ${portraitRatio === ratio
+                                            ? 'bg-purple-500/30 text-purple-300 ring-1 ring-purple-500/50'
+                                            : 'bg-white/5 text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                                            }`}
+                                    >
+                                        {ratio}
+                                    </button>
+                                ))}
+                            </div>
+                            <button
+                                disabled
+                                className="h-10 px-4 rounded-xl bg-zinc-800 text-zinc-500 border border-white/5 text-xs font-bold cursor-not-allowed"
+                            >
+                                一键裁切全部
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-[1.1fr_0.9fr] gap-4 min-h-[360px]">
+                            <div className="rounded-2xl bg-black/40 border border-white/5 p-4 flex flex-col gap-3">
+                                <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                    <span>叠加预览</span>
+                                    <span>{workbenchFrames.length} 张横图</span>
+                                </div>
+                                <div className="relative flex-1 rounded-2xl bg-black overflow-hidden border border-white/5">
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <div className="h-[88%]" style={{ aspectRatio: portraitRatio.replace(':', '/') }}>
+                                            <div className="w-full h-full border-2 border-purple-400/80 rounded-md shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"></div>
+                                        </div>
+                                    </div>
+                                    {workbenchFrames.map((frame, index) => (
+                                        <img
+                                            key={frame.id}
+                                            src={frame.url}
+                                            alt={`stack-${index}`}
+                                            className="absolute inset-0 w-full h-full object-contain"
+                                            style={{ opacity: Math.max(0.14, 0.42 - index * 0.05) }}
+                                        />
+                                    ))}
+                                    <div className="absolute left-3 top-3 px-2 py-1 rounded bg-black/60 border border-white/10 text-[10px] font-mono text-purple-200">
+                                        {portraitRatio} 预览框
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/30 border border-white/5 p-4 flex flex-col gap-3">
+                                <div className="text-[11px] text-zinc-500">操作说明</div>
+                                <div className="text-xs text-zinc-300 leading-6">
+                                    <p>1. 先在图库完成优选。</p>
+                                    <p>2. 点击“横转竖”进入这个操作台。</p>
+                                    <p>3. 选择比例，观察人物叠加轮廓。</p>
+                                    <p>4. 后续这里会接入统一裁切全部图片。</p>
+                                </div>
+                                <div className="mt-auto rounded-xl bg-purple-500/10 border border-purple-500/20 p-3 text-[11px] text-purple-200 leading-5">
+                                    当前先做界面结构确认：横转竖作为图库后的二次处理工具，不再占用底部主控制区。
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>,

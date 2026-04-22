@@ -31,9 +31,12 @@ export function VideoStage({
         if (videoFile) {
             let url;
             if (videoFile.loadedPath && videoFile.loadedPath !== videoFile.path) {
-                // Was converted to mp4! Load it directly from local filesystem temp path
-                const safePath = videoFile.loadedPath.replace(/\\/g, '/');
-                url = `file:///${safePath}`;
+                // In dev mode the page is served over http, so file:/// media can be blocked.
+                // Read the remuxed temp file and expose it as a blob URL instead.
+                const fs = window.require('fs');
+                const buffer = fs.readFileSync(videoFile.loadedPath);
+                const blob = new Blob([buffer], { type: 'video/mp4' });
+                url = URL.createObjectURL(blob);
             } else {
                 url = URL.createObjectURL(videoFile);
             }
