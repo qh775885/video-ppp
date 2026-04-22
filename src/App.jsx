@@ -837,12 +837,21 @@ function App() {
                 if (timeToCapture > effectiveEnd) break;
                 setExtractStatus(`分析帧 ${i + 1}/${framePaths.length}`);
                 const img = await loadImageFromPath(framePaths[i]);
-                const canvas = cropFrameToCanvas(img, 0, false);
-                const sharpness = computeSharpness(canvas);
-                const hash = computeDHash(canvas);
-                const content = analyzeFrameContent(canvas);
+                const analysisCanvas = cropFrameToCanvas(img, 0, false);
+                const outputCanvas = portraitRatio ? cropFrameToCanvas(img, cropOffset, true, portraitRatio) : analysisCanvas;
+                const sharpness = computeSharpness(analysisCanvas);
+                const hash = computeDHash(analysisCanvas);
+                const content = analyzeFrameContent(analysisCanvas);
                 if (!content.isUsable) continue;
-                candidates.push({ time: timeToCapture, canvas, sharpness, offset: 0, hash, ...content, selectionScore: computeSelectionScore({ sharpness, ...content }) });
+                candidates.push({
+                    time: timeToCapture,
+                    canvas: outputCanvas,
+                    sharpness,
+                    offset: portraitRatio ? cropOffset : 0,
+                    hash,
+                    ...content,
+                    selectionScore: computeSelectionScore({ sharpness, ...content })
+                });
             }
 
             const finalFrames = [];
@@ -870,8 +879,8 @@ function App() {
             const nextFrames = [];
             for (const frame of finalFrames) {
                 const savedFrame = await saveCanvasAsFrame(frame.canvas, frame.time, {
-                    isPortrait: false,
-                    ratio: '原图',
+                    isPortrait: !!portraitRatio,
+                    ratio: portraitRatio || '原图',
                     append: false
                 });
                 if (savedFrame) nextFrames.push(savedFrame);
@@ -920,8 +929,18 @@ function App() {
         }
     };
 
-    const handlePortraitProcess = async () => {
-        if (isExtracting || frames.length === 0 || !portraitRatio) return;
+    const handlePortraitProcess = async (options = {}) => {
+        const {
+            frameIds = null,
+            ratio = portraitRatio,
+            offset = cropOffset,
+            useAutoTrack = autoTrack
+        } = options;
+
+        if (isExtracting || frames.length === 0 || !ratio) return;
+        const targetFrames = frames.filter(frame => !frame.isPortrait && (!frameIds || frameIds.includes(frame.id)));
+        if (targetFrames.length === 0) return;
+
         setIsExtracting(true);
         setExtractElapsed(0);
         setExtractStatus('竖图处理中...');
@@ -930,24 +949,24 @@ function App() {
             setExtractElapsed(Math.round((Date.now() - processStartTime) / 1000));
         }, 500);
 
-        let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : cropOffset;
+        let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : offset;
 
         try {
-            if (autoTrack && !aiModel) {
-                loadAiModel();
+            let activeAiModel = aiModel;
+            if (useAutoTrack && !activeAiModel) {
                 setExtractStatus('等待 AI 加载...');
-                return;
+                activeAiModel = await loadAiModel();
             }
 
-            const nextFrames = [];
-            for (let i = 0; i < frames.length; i++) {
-                setExtractStatus(`竖图处理 ${i + 1}/${frames.length}`);
-                const frame = frames[i];
+            const processedFrames = new Map();
+            for (let i = 0; i < targetFrames.length; i++) {
+                setExtractStatus(`竖图处理 ${i + 1}/${targetFrames.length}`);
+                const frame = targetFrames[i];
                 const img = await loadImageFromUrl(frame.url);
-                let frameOffset = autoTrack ? trackingOffset : cropOffset;
-                if (autoTrack && aiModel) {
+                let frameOffset = useAutoTrack ? trackingOffset : offset;
+                if (useAutoTrack && activeAiModel) {
                     try {
-                        const result = await runAiDetection(img, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
+                        const result = await runAiDetection(img, activeAiModel, ratio, manualLockTargetRef, lastTrackedOffsetRef);
                         if (result !== null) {
                             trackingOffset = result;
                             frameOffset = result;
@@ -957,18 +976,18 @@ function App() {
                     }
                 }
 
-                const canvas = cropFrameToCanvas(img, frameOffset, true);
+                const canvas = cropFrameToCanvas(img, frameOffset, true, ratio);
                 const savedFrame = await saveCanvasAsFrame(canvas, frame.time, {
                     isPortrait: true,
-                    ratio: portraitRatio,
+                    ratio,
                     append: false
                 });
-                if (savedFrame) nextFrames.push(savedFrame);
+                if (savedFrame) processedFrames.set(frame.id, savedFrame);
             }
 
-            revokeFrames(frames);
-            setFrames(nextFrames);
-            showCaptureNotice(nextFrames.length > 0 ? `已处理 ${nextFrames.length} 张竖图` : '未生成竖图');
+            revokeFrames(targetFrames.filter(frame => processedFrames.has(frame.id)));
+            setFrames(prev => prev.map(frame => processedFrames.get(frame.id) ?? frame));
+            showCaptureNotice(processedFrames.size > 0 ? `已处理 ${processedFrames.size} 张竖图` : '未生成竖图');
         } finally {
             if (extractTimerRef.current) { clearInterval(extractTimerRef.current); extractTimerRef.current = null; }
             setExtractElapsed(Math.round((Date.now() - processStartTime) / 1000));
@@ -977,13 +996,13 @@ function App() {
         }
     };
 
-    function cropFrameToCanvas(img, frameOffset, usePortraitCrop) {
+    function cropFrameToCanvas(img, frameOffset, usePortraitCrop, ratio = portraitRatio) {
         const vWidth = img.naturalWidth || img.width;
         const vHeight = img.naturalHeight || img.height;
         let sx = 0, sy = 0, sWidth = vWidth, sHeight = vHeight;
 
-        if (usePortraitCrop && portraitRatio) {
-            const ratioParts = portraitRatio.split(':');
+        if (usePortraitCrop && ratio) {
+            const ratioParts = ratio.split(':');
             const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
             const targetWidth = vHeight * targetAspect;
             if (targetWidth <= vWidth) {
@@ -1215,11 +1234,6 @@ function App() {
                             portraitRatio={portraitRatio}
                             onSetPortraitMode={setPortraitMode}
 
-                            autoTrack={autoTrack}
-                            onToggleAutoTrack={handleToggleAutoTrack}
-                            aiModelReady={!!aiModel}
-                            isAiLoading={isAiLoading}
-
                             // Extract Props
                             targetCount={targetCount}
                             onTargetCountChange={handleTargetCountChange}
@@ -1228,9 +1242,7 @@ function App() {
                             isExtracting={isExtracting}
                             extractElapsed={extractElapsed}
                             extractStatus={extractStatus}
-                            framesCount={frames.length}
                             onSelectFrames={handleSelectFrames}
-                            onPortraitProcess={handlePortraitProcess}
                         />
                     </div>
                 )}
@@ -1241,6 +1253,7 @@ function App() {
                 frames={frames}
                 onClear={handleClear}
                 onDeleteFrame={handleDeleteFrame}
+                onPortraitProcess={handlePortraitProcess}
                 onDownload={handleDownload}
                 cacheDir={cacheDir}
                 onSelectCacheDir={handleSelectCache}
@@ -1257,10 +1270,9 @@ function FloatingCockpit({
     currentTime, duration, onSeek,
     rangeStart, rangeEnd, onUpdateStart, onUpdateEnd, onResetRange,
     portraitRatio, onSetPortraitMode,
-    autoTrack, onToggleAutoTrack, aiModelReady, isAiLoading,
     targetCount, onTargetCountChange,
     multiplier, onMultiplierChange,
-    isExtracting, extractElapsed, extractStatus, framesCount, onSelectFrames, onPortraitProcess
+    isExtracting, extractElapsed, extractStatus, onSelectFrames
 }) {
     // Local State for Range Mode Toggle
     // We lift this up if App needs to know, but for UI visibility, local is fine.
@@ -1472,8 +1484,8 @@ function FloatingCockpit({
 
                 <div className="flex-1"></div>
 
-                {/* Middle: Range */}
-                <div className="flex items-center justify-center shrink-0">
+                {/* Middle: Manual Crop */}
+                <div className="flex items-center justify-center gap-2 shrink-0">
                     <button
                         onClick={toggleRangeMode}
                         className={`h-11 px-5 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border whitespace-nowrap ${isRangeMode ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-white/5 border-white/5 text-zinc-500 hover:text-zinc-300 hover:bg-white/10'}`}
@@ -1481,6 +1493,21 @@ function FloatingCockpit({
                         <ScanLine size={16} />
                         <span>区间</span>
                     </button>
+
+                    <div className="flex items-center gap-1 rounded-xl bg-black/35 border border-white/10 p-1 shadow-inner ring-1 ring-white/5">
+                        {['9:16', '3:4', '4:5'].map(ratio => (
+                            <button
+                                key={ratio}
+                                onClick={() => onSetPortraitMode(ratio)}
+                                className={`h-9 px-3 rounded-lg flex items-center justify-center text-xs font-bold font-mono transition-all whitespace-nowrap ${portraitRatio === ratio
+                                    ? 'bg-purple-500/30 text-purple-200 ring-1 ring-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.18)]'
+                                    : 'bg-transparent text-zinc-500 hover:text-zinc-200 hover:bg-white/8'
+                                    }`}
+                            >
+                                {ratio}
+                            </button>
+                        ))}
+                    </div>
                 </div>
 
                 <div className="flex-1"></div>

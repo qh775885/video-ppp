@@ -1,7 +1,9 @@
 {
-  "name": "video-extractor",
+  "name": "video-ppp",
   "private": true,
   "version": "2.1.3",
+  "description": "本地视频截图、优选与横转竖工具",
+  "author": "qh775885",
   "license": "GPL-3.0",
   "main": "electron-main.js",
   "scripts": {
@@ -10,11 +12,15 @@
     "dev:electron": "set VITE_DEV_SERVER_URL=http://127.0.0.1:5173 && wait-on tcp:5173 && electron .",
     "web": "vite",
     "preview": "vite preview",
-    "build": "vite build && electron-builder --win dir",
-    "build:setup": "vite build && electron-builder --win nsis"
+    "clean:artifacts": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"foreach ($p in @('dist','extracted_asar')) { if (Test-Path $p) { Remove-Item $p -Recurse -Force } }; $releaseRoot = 'release'; if (!(Test-Path $releaseRoot)) { New-Item -ItemType Directory -Path $releaseRoot | Out-Null }; foreach ($p in @(('视频截图神器-' + $env:npm_package_version + '-绿色版'), ('视频截图神器 Setup ' + $env:npm_package_version + '.exe'), ('视频截图神器 Setup ' + $env:npm_package_version + '.exe.blockmap'), 'builder-debug.yml', 'latest.yml')) { $full = Join-Path $releaseRoot $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force } }\"",
+    "verify": "vite build",
+    "build": "npm run build:dir",
+    "build:dir": "npm run clean:artifacts && npm run verify && electron-builder --win dir && powershell -NoProfile -ExecutionPolicy Bypass -Command \"$base = 'release'; $src = Join-Path $base 'win-unpacked'; $dst = Join-Path $base ('视频截图神器-' + $env:npm_package_version + '-绿色版'); if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }; if (Test-Path $src) { Move-Item $src $dst }; foreach ($p in @('.icon-ico','builder-debug.yml')) { $full = Join-Path $base $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force } }\"",
+    "build:setup": "npm run clean:artifacts && npm run verify && electron-builder --win nsis",
+    "build:release": "npm run clean:artifacts && npm run verify && electron-builder --win nsis"
   },
   "build": {
-    "appId": "com.yourname.videoextractor",
+    "appId": "com.qh775885.videoppp",
     "productName": "视频截图神器",
     "icon": "public/icon.png",
     "files": [
@@ -24,13 +30,12 @@
       "public/icon.png"
     ],
     "directories": {
-      "output": "release/${version}"
+      "output": "release"
     },
     "win": {
       "icon": "public/icon.png",
       "target": [
-        "nsis",
-        "dir"
+        "nsis"
       ]
     },
     "nsis": {
@@ -57,17 +62,17 @@
     "wait-on": "^8.0.5"
   },
   "dependencies": {
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
     "clsx": "^2.1.1",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
     "file-saver": "^2.0.5",
+    "fluent-ffmpeg": "^2.1.3",
     "jszip": "^3.10.1",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "tailwind-merge": "^3.4.0",
-    "@tensorflow-models/coco-ssd": "^2.2.3",
-    "@tensorflow/tfjs": "^4.22.0",
-    "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0",
-    "fluent-ffmpeg": "^2.1.3"
+    "tailwind-merge": "^3.4.0"
   }
 }

@@ -1,13 +1,21 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Trash2, FolderOpen, Image as ImageIcon, Download, X, ChevronLeft, ChevronRight, Scissors } from 'lucide-react';
+import { Trash2, FolderOpen, Image as ImageIcon, X, ChevronLeft, ChevronRight, Scissors } from 'lucide-react';
 import { version } from '../../package.json';
 
-export function Sidebar({ frames, onClear, onDeleteFrame, onDownload, cacheDir, onSelectCacheDir }) {
+export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onDownload, cacheDir, onSelectCacheDir }) {
     const [previewIndex, setPreviewIndex] = useState(-1); // -1 means closed
     const [isAboutOpen, setIsAboutOpen] = useState(false);
     const [isPortraitWorkbenchOpen, setIsPortraitWorkbenchOpen] = useState(false);
     const [portraitRatio, setPortraitRatio] = useState('3:4');
+    const [activeWorkbenchId, setActiveWorkbenchId] = useState(null);
+    const [workbenchOffset, setWorkbenchOffset] = useState(0);
+    const [previewMetrics, setPreviewMetrics] = useState({ width: 0, height: 0, maxOffset: 0 });
+    const previewContainerRef = useRef(null);
+    const previewImageRef = useRef(null);
+    const isDraggingCropRef = useRef(false);
+    const dragStartXRef = useRef(0);
+    const dragStartOffsetRef = useRef(0);
 
     // --- Lightbox Logic ---
     const handleNext = useCallback(() => {
@@ -43,8 +51,108 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onDownload, cacheDir, 
     }, [previewIndex, handleNext, handlePrev]);
 
     const currentFrame = previewIndex >= 0 ? frames[previewIndex] : null;
-    const hasHorizontalFrames = frames.some(frame => !frame.isPortrait);
-    const workbenchFrames = frames.filter(frame => !frame.isPortrait).slice(0, 6);
+    const horizontalFrames = useMemo(() => frames.filter(frame => !frame.isPortrait), [frames]);
+    const portraitFrames = useMemo(() => frames.filter(frame => frame.isPortrait), [frames]);
+    const feedbackFrames = useMemo(() => [...frames].slice().reverse().slice(0, 6), [frames]);
+    const hasHorizontalFrames = horizontalFrames.length > 0;
+    const activeWorkbenchFrame = horizontalFrames.find(frame => frame.id === activeWorkbenchId) || horizontalFrames[0] || null;
+
+    const updatePreviewMetrics = useCallback(() => {
+        const container = previewContainerRef.current;
+        const image = previewImageRef.current;
+        if (!container || !image || !image.naturalWidth || !image.naturalHeight) return;
+
+        const imageRatio = image.naturalWidth / image.naturalHeight;
+        const containerRatio = container.clientWidth / container.clientHeight;
+        let displayWidth = 0;
+        let displayHeight = 0;
+
+        if (containerRatio > imageRatio) {
+            displayHeight = container.clientHeight;
+            displayWidth = displayHeight * imageRatio;
+        } else {
+            displayWidth = container.clientWidth;
+            displayHeight = displayWidth / imageRatio;
+        }
+
+        const [ratioW, ratioH] = portraitRatio.split(':').map(Number);
+        const maskWidth = Math.min(displayWidth, displayHeight * (ratioW / ratioH));
+        const maxOffset = Math.max(0, (displayWidth - maskWidth) / 2);
+
+        setPreviewMetrics({ width: maskWidth, height: displayHeight, maxOffset });
+    }, [portraitRatio]);
+
+    useEffect(() => {
+        if (!isPortraitWorkbenchOpen) return;
+        if (!activeWorkbenchFrame && horizontalFrames[0]) {
+            setActiveWorkbenchId(horizontalFrames[0].id);
+        }
+    }, [isPortraitWorkbenchOpen, activeWorkbenchFrame, horizontalFrames]);
+
+    useEffect(() => {
+        if (!isPortraitWorkbenchOpen) return;
+        setWorkbenchOffset(0);
+    }, [isPortraitWorkbenchOpen, activeWorkbenchId, portraitRatio]);
+
+    useEffect(() => {
+        if (!isPortraitWorkbenchOpen) return;
+        updatePreviewMetrics();
+        const observer = new ResizeObserver(updatePreviewMetrics);
+        if (previewContainerRef.current) observer.observe(previewContainerRef.current);
+
+        return () => observer.disconnect();
+    }, [isPortraitWorkbenchOpen, activeWorkbenchId, updatePreviewMetrics]);
+
+    useEffect(() => {
+        if (!isPortraitWorkbenchOpen) return;
+
+        const handleMouseMove = (e) => {
+            if (!isDraggingCropRef.current || previewMetrics.maxOffset <= 0) return;
+            const deltaRatio = (e.clientX - dragStartXRef.current) / previewMetrics.maxOffset;
+            const nextOffset = Math.max(-1, Math.min(1, dragStartOffsetRef.current + deltaRatio));
+            setWorkbenchOffset(nextOffset);
+        };
+
+        const handleMouseUp = () => {
+            isDraggingCropRef.current = false;
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isPortraitWorkbenchOpen, previewMetrics.maxOffset]);
+
+    const openPortraitWorkbench = () => {
+        if (!horizontalFrames[0]) return;
+        setActiveWorkbenchId(horizontalFrames[0].id);
+        setWorkbenchOffset(0);
+        setIsPortraitWorkbenchOpen(true);
+    };
+
+    const handleWorkbenchCrop = (frameIds) => {
+        if (!frameIds || frameIds.length === 0) return;
+        onPortraitProcess({ frameIds, ratio: portraitRatio, offset: workbenchOffset, useAutoTrack: false });
+    };
+
+    const handleCropMouseDown = (e) => {
+        if (previewMetrics.maxOffset <= 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        isDraggingCropRef.current = true;
+        dragStartXRef.current = e.clientX;
+        dragStartOffsetRef.current = workbenchOffset;
+    };
+
+    const handleWorkbenchRightClick = (e) => {
+        if (!activeWorkbenchFrame) return;
+        e.preventDefault();
+        e.stopPropagation();
+        handleWorkbenchCrop([activeWorkbenchFrame.id]);
+    };
 
     return (
         <div className="flex flex-col h-full bg-zinc-950/90 backdrop-blur-xl border-l border-white/10 w-[320px]">
@@ -75,7 +183,7 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onDownload, cacheDir, 
                     <div className="flex items-center gap-2">
                         {hasHorizontalFrames && (
                             <button
-                                onClick={() => setIsPortraitWorkbenchOpen(true)}
+                                onClick={openPortraitWorkbench}
                                 className="flex items-center gap-1 text-[10px] text-purple-300 hover:text-white transition-colors px-2 py-1 rounded bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20"
                             >
                                 <Scissors size={12} />
@@ -244,16 +352,15 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onDownload, cacheDir, 
                 document.body
             )}
 
-            {isPortraitWorkbenchOpen && createPortal(
+            {isPortraitWorkbenchOpen && activeWorkbenchFrame && createPortal(
                 <div
                     className="fixed inset-0 z-[180] bg-black/80 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200"
                     onClick={() => setIsPortraitWorkbenchOpen(false)}
                 >
-                    <div className="w-[780px] max-w-[92vw] bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-5 flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+                    <div className="w-[980px] max-w-[92vw] bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-4 flex flex-col gap-4" onClick={e => e.stopPropagation()}>
                         <div className="flex items-start justify-between gap-4">
                             <div>
                                 <h3 className="text-lg font-bold text-white tracking-wide">横转竖操作台</h3>
-                                <p className="text-xs text-zinc-500 mt-1">先看叠加预览，再决定统一裁切比例。</p>
                             </div>
                             <button
                                 className="text-zinc-500 hover:text-white transition-colors"
@@ -278,51 +385,130 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onDownload, cacheDir, 
                                     </button>
                                 ))}
                             </div>
-                            <button
-                                disabled
-                                className="h-10 px-4 rounded-xl bg-zinc-800 text-zinc-500 border border-white/5 text-xs font-bold cursor-not-allowed"
-                            >
-                                一键裁切全部
-                            </button>
                         </div>
 
-                        <div className="grid grid-cols-[1.1fr_0.9fr] gap-4 min-h-[360px]">
-                            <div className="rounded-2xl bg-black/40 border border-white/5 p-4 flex flex-col gap-3">
+                        <div className="grid grid-cols-[minmax(0,1fr)_220px] gap-3 min-h-[500px]">
+                            <div className="rounded-2xl bg-black/40 border border-white/5 p-3 flex flex-col gap-3 min-h-[500px]">
                                 <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <span>叠加预览</span>
-                                    <span>{workbenchFrames.length} 张横图</span>
+                                    <div className="flex items-center gap-3">
+                                        <span>手动预览</span>
+                                        <span className="px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-200 font-mono">
+                                            当前图 {horizontalFrames.findIndex(frame => frame.id === activeWorkbenchFrame.id) + 1} / {horizontalFrames.length}
+                                        </span>
+                                    </div>
+                                    <span>右键当前图直接裁切</span>
                                 </div>
-                                <div className="relative flex-1 rounded-2xl bg-black overflow-hidden border border-white/5">
-                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                        <div className="h-[88%]" style={{ aspectRatio: portraitRatio.replace(':', '/') }}>
-                                            <div className="w-full h-full border-2 border-purple-400/80 rounded-md shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"></div>
+
+                                <div
+                                    ref={previewContainerRef}
+                                    className="relative flex-1 min-h-[340px] rounded-2xl bg-black overflow-hidden border border-white/5"
+                                    onContextMenu={handleWorkbenchRightClick}
+                                >
+                                    <img
+                                        ref={previewImageRef}
+                                        src={activeWorkbenchFrame.url}
+                                        alt="portrait-workbench"
+                                        className="absolute inset-0 w-full h-full object-contain"
+                                        onLoad={updatePreviewMetrics}
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <div
+                                            className="rounded-md border-2 border-purple-400/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.48)] pointer-events-auto cursor-grab active:cursor-grabbing"
+                                            style={{
+                                                width: `${previewMetrics.width}px`,
+                                                height: `${previewMetrics.height}px`,
+                                                transform: `translateX(${workbenchOffset * previewMetrics.maxOffset}px)`
+                                            }}
+                                            onMouseDown={handleCropMouseDown}
+                                        >
+                                            <div className="absolute inset-0 opacity-20 pointer-events-none">
+                                                <div className="absolute top-1/3 left-0 w-full h-px bg-white"></div>
+                                                <div className="absolute top-2/3 left-0 w-full h-px bg-white"></div>
+                                                <div className="absolute left-1/3 top-0 h-full w-px bg-white"></div>
+                                                <div className="absolute left-2/3 top-0 h-full w-px bg-white"></div>
+                                            </div>
                                         </div>
                                     </div>
-                                    {workbenchFrames.map((frame, index) => (
-                                        <img
-                                            key={frame.id}
-                                            src={frame.url}
-                                            alt={`stack-${index}`}
-                                            className="absolute inset-0 w-full h-full object-contain"
-                                            style={{ opacity: Math.max(0.14, 0.42 - index * 0.05) }}
-                                        />
-                                    ))}
                                     <div className="absolute left-3 top-3 px-2 py-1 rounded bg-black/60 border border-white/10 text-[10px] font-mono text-purple-200">
-                                        {portraitRatio} 预览框
+                                        {portraitRatio} | 偏移 {workbenchOffset.toFixed(2)}
                                     </div>
+                                    <div className="absolute right-3 bottom-3 px-2 py-1 rounded bg-black/60 border border-white/10 text-[10px] font-mono text-zinc-200">
+                                        {activeWorkbenchFrame ? new Date(activeWorkbenchFrame.time * 1000).toISOString().substr(11, 8) : '--:--:--'}
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
+                                    <span>源图缩略图</span>
+                                    <span>已显示 {Math.min(horizontalFrames.length, 8)} / {horizontalFrames.length} 张</span>
+                                </div>
+
+                                <div className="grid grid-cols-4 gap-2">
+                                    {horizontalFrames.slice(0, 8).map((frame, index) => (
+                                        <button
+                                            key={frame.id}
+                                            onClick={() => setActiveWorkbenchId(frame.id)}
+                                            onContextMenu={(e) => {
+                                                e.preventDefault();
+                                                setActiveWorkbenchId(frame.id);
+                                                handleWorkbenchCrop([frame.id]);
+                                            }}
+                                            className={`relative overflow-hidden rounded-xl border transition-all ${activeWorkbenchFrame.id === frame.id ? 'border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.18)] scale-[1.02]' : 'border-white/8 hover:border-white/20'}`}
+                                            style={{ aspectRatio: '16 / 9' }}
+                                        >
+                                            <img src={frame.url} alt="workbench-thumb" className="w-full h-full object-cover bg-black/60" />
+                                            <div className="absolute left-1.5 top-1.5 px-1.5 py-0.5 rounded bg-black/65 text-[9px] font-mono text-white border border-white/10">
+                                                {index + 1}
+                                            </div>
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
 
-                            <div className="rounded-2xl bg-black/30 border border-white/5 p-4 flex flex-col gap-3">
-                                <div className="text-[11px] text-zinc-500">操作说明</div>
-                                <div className="text-xs text-zinc-300 leading-6">
-                                    <p>1. 先在图库完成优选。</p>
-                                    <p>2. 点击“横转竖”进入这个操作台。</p>
-                                    <p>3. 选择比例，观察人物叠加轮廓。</p>
-                                    <p>4. 后续这里会接入统一裁切全部图片。</p>
+                            <div className="rounded-2xl bg-black/30 border border-white/5 p-2.5 flex flex-col gap-2 min-h-[500px]">
+                                <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
+                                    <span>实时图库反馈</span>
+                                    <span>{portraitFrames.length} 张竖图</span>
                                 </div>
-                                <div className="mt-auto rounded-xl bg-purple-500/10 border border-purple-500/20 p-3 text-[11px] text-purple-200 leading-5">
-                                    当前先做界面结构确认：横转竖作为图库后的二次处理工具，不再占用底部主控制区。
+
+                                {portraitFrames.length > 0 && (
+                                    <div className="rounded-xl border border-purple-500/20 bg-purple-500/10 px-2.5 py-2 text-[10px] text-purple-200 font-mono">
+                                        最新输出已直接回写图库
+                                    </div>
+                                )}
+
+                                <div className="flex-1 overflow-y-auto pr-1 -mr-1 no-scrollbar flex flex-col gap-2">
+                                    {feedbackFrames.length === 0 ? (
+                                        <div className="flex-1 min-h-[220px] rounded-2xl border border-dashed border-white/10 flex items-center justify-center text-[12px] text-zinc-600">
+                                            暂无图库反馈
+                                        </div>
+                                    ) : (
+                                        feedbackFrames.map((frame, index) => (
+                                            <div
+                                                key={frame.id}
+                                                className={`relative rounded-xl overflow-hidden border ${frame.isPortrait ? 'border-purple-500/30 bg-purple-500/5' : 'border-white/8 bg-white/[0.03]'}`}
+                                            >
+                                                <div className="flex items-center gap-2 p-2">
+                                                    <div
+                                                        className="relative shrink-0 overflow-hidden rounded-lg bg-black/50"
+                                                        style={{ width: frame.isPortrait ? '48px' : '68px', aspectRatio: frame.ratio ? frame.ratio.replace(':', '/') : (frame.isPortrait ? '9 / 16' : '16 / 9') }}
+                                                    >
+                                                        <img src={frame.url} alt={`feedback-${index}`} className="w-full h-full object-cover" />
+                                                    </div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-1.5 text-[10px] text-zinc-300 font-mono">
+                                                            <span>{new Date(frame.time * 1000).toISOString().substr(11, 8)}</span>
+                                                            <span className={`px-1.5 py-0.5 rounded border ${frame.isPortrait ? 'border-purple-500/30 text-purple-200 bg-purple-500/10' : 'border-white/10 text-zinc-400 bg-black/30'}`}>
+                                                                {frame.isPortrait ? frame.ratio : '原图'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="mt-1 text-[10px] text-zinc-500 truncate">
+                                                            {frame.isPortrait ? '已生成竖图' : '源图库原图'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
                             </div>
                         </div>

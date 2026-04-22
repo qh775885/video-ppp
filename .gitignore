@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 release/
+extracted_asar/
+*_backup.*
+temp_*
 
 # Editor directories and files
 .vscode/*
