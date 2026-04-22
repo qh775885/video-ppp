@@ -11,12 +11,11 @@
 - 截图自动保存到指定目录，并在侧栏预览
 - 快捷键：`Space` 播放暂停，`S` / 右键截图，`I` / `O` 设置范围
 
-## 开发与验证
+## 开发
 
 ```bash
 npm install
 npm run dev
-npm run verify
 ```
 
 ## 构建
@@ -27,7 +26,4 @@ npm run build
 
 # 安装版，适合面向普通用户发布
 npm run build:setup
-
-# 发布版（当前为安装版）
-npm run build:release
 ```
