@@ -147,7 +147,7 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onRestoreFrame, onPort
 
     const handleWorkbenchCrop = useCallback((frameIds) => {
         if (!frameIds || frameIds.length === 0) return;
-        onPortraitProcess({ frameIds, ratio: portraitRatio, offset: workbenchOffset, useAutoTrack: false });
+        onPortraitProcess({ frameIds, ratio: portraitRatio, offset: workbenchOffset });
     }, [onPortraitProcess, portraitRatio, workbenchOffset]);
 
     const handleWorkbenchStep = useCallback((direction) => {
@@ -396,7 +396,6 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onRestoreFrame, onPort
                                 <span className="text-zinc-500 font-bold uppercase tracking-wider text-[9px]">使用提示</span>
                                 <div className="text-zinc-300 space-y-1">
                                     <p>• 推荐张数下限为 <span className="text-indigo-400 font-mono">10</span> 张</p>
-                                    <p>• AI 模式建议锁定单一清晰目标</p>
                                     <p>• 预览图双击可全屏沉浸浏览</p>
                                     <p>• 预览时 <span className="text-indigo-400 font-mono">←/→</span> 切换，<span className="text-indigo-400 font-mono">Esc</span> 退出</p>
                                 </div>

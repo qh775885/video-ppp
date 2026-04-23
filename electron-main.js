@@ -2,18 +2,56 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
-const ffprobePath = require('ffprobe-static');
 const os = require('os');
 const fs = require('fs');
+const { execFile } = require('child_process');
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const isDev = Boolean(devServerUrl);
 
-// Handling dev vs packed paths for ffmpeg/ffprobe
+// Handling dev vs packed paths for ffmpeg
 const fixPath = (p) => p ? p.replace('app.asar', 'app.asar.unpacked') : '';
-ffmpeg.setFfmpegPath(fixPath(ffmpegPath));
-if (ffprobePath && ffprobePath.path) {
-    ffmpeg.setFfprobePath(fixPath(ffprobePath.path));
+const resolvedFfmpegPath = fixPath(ffmpegPath);
+ffmpeg.setFfmpegPath(resolvedFfmpegPath);
+
+function parseFfmpegMetadata(stderr = '') {
+    const durationMatch = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    const duration = durationMatch
+        ? (parseInt(durationMatch[1], 10) * 3600) + (parseInt(durationMatch[2], 10) * 60) + parseFloat(durationMatch[3])
+        : 0;
+
+    const videoLine = stderr.split(/\r?\n/).find(line => /Stream #.*Video:/.test(line)) || '';
+    const audioLine = stderr.split(/\r?\n/).find(line => /Stream #.*Audio:/.test(line)) || '';
+
+    const videoCodecMatch = videoLine.match(/Video:\s*([^,\s]+)/);
+    const audioCodecMatch = audioLine.match(/Audio:\s*([^,\s]+)/);
+    const sizeMatch = videoLine.match(/(\d{2,5})x(\d{2,5})/);
+    const fpsMatch = videoLine.match(/(\d+(?:\.\d+)?)\s*fps/);
+    const tbrMatch = videoLine.match(/(\d+(?:\.\d+)?)\s*tbr/);
+
+    return {
+        duration,
+        fps: fpsMatch ? parseFloat(fpsMatch[1]) : (tbrMatch ? parseFloat(tbrMatch[1]) : 30),
+        width: sizeMatch ? parseInt(sizeMatch[1], 10) : 0,
+        height: sizeMatch ? parseInt(sizeMatch[2], 10) : 0,
+        videoCodec: videoCodecMatch ? videoCodecMatch[1].toLowerCase() : '',
+        audioCodec: audioCodecMatch ? audioCodecMatch[1].toLowerCase() : '',
+        hasAudio: Boolean(audioLine)
+    };
+}
+
+function probeVideoInfo(filePath) {
+    return new Promise((resolve, reject) => {
+        if (!filePath) return reject(new Error('No input specified'));
+
+        execFile(resolvedFfmpegPath, ['-hide_banner', '-i', filePath], { windowsHide: true }, (error, stdout, stderr) => {
+            const metadata = parseFfmpegMetadata(stderr || stdout || '');
+            if (!metadata.width && !metadata.height && error) {
+                return reject(error);
+            }
+            resolve(metadata);
+        });
+    });
 }
 
 function createWindow() {
@@ -69,28 +107,12 @@ ipcMain.handle('open-folder', async (event, folderPath) => {
 });
 
 ipcMain.handle('get-video-info', (event, filePath) => {
-    return new Promise((resolve, reject) => {
-        if (!filePath) return reject(new Error("No input specified"));
-        ffmpeg.ffprobe(filePath, (err, metadata) => {
-            if (err) return reject(err);
-            const stream = metadata.streams.find(s => s.codec_type === 'video');
-            let fps = 30; // default
-            if (stream && stream.r_frame_rate) {
-                const parts = stream.r_frame_rate.split('/');
-                if (parts.length === 2 && parts[1] !== '0') {
-                    fps = parseInt(parts[0]) / parseInt(parts[1]);
-                } else if (parts.length === 1) {
-                    fps = parseFloat(parts[0]);
-                }
-            }
-            resolve({
-                duration: metadata.format.duration,
-                fps,
-                width: stream ? stream.width : 0,
-                height: stream ? stream.height : 0
-            });
-        });
-    });
+    return probeVideoInfo(filePath).then(metadata => ({
+        duration: metadata.duration,
+        fps: metadata.fps,
+        width: metadata.width,
+        height: metadata.height
+    }));
 });
 
 ipcMain.handle('process-media', (event, filePath) => {
@@ -100,16 +122,9 @@ ipcMain.handle('process-media', (event, filePath) => {
             return reject(new Error("No path specified for media processing"));
         }
 
-        ffmpeg.ffprobe(filePath, (err, metadata) => {
-            if (err) {
-                console.error("FFprobe Error:", err);
-                return reject(err);
-            }
-
-            const vStream = metadata.streams.find(s => s.codec_type === 'video');
-            const aStream = metadata.streams.find(s => s.codec_type === 'audio');
-            const vCodec = vStream ? (vStream.codec_name || '').toLowerCase() : '';
-            const aCodec = aStream ? (aStream.codec_name || '').toLowerCase() : '';
+        probeVideoInfo(filePath).then(metadata => {
+            const vCodec = metadata.videoCodec;
+            const aCodec = metadata.audioCodec;
 
             const tempPath = path.join(os.tmpdir(), `vme_${Date.now()}.mp4`);
             const command = ffmpeg(filePath);
@@ -125,7 +140,7 @@ ipcMain.handle('process-media', (event, filePath) => {
 
             if (aCodec === 'aac') {
                 command.outputOptions(['-c:a copy']);
-            } else if (aStream) {
+            } else if (metadata.hasAudio) {
                 command.outputOptions(['-c:a aac', '-b:a 128k']);
             } else {
                 command.outputOptions(['-an']);
@@ -145,6 +160,9 @@ ipcMain.handle('process-media', (event, filePath) => {
                     reject(new Error(`${err.message} | STDERR: ${stderr}`));
                 })
                 .save(tempPath);
+        }).catch(err => {
+            console.error("FFmpeg probe error:", err);
+            reject(err);
         });
     });
 });

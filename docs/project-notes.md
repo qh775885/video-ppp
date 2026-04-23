@@ -9,23 +9,27 @@
 - 发布流程：确认有效 -> 更新 `package.json` -> 更新 `CHANGELOG.md` -> 提交代码
 
 ## 现状
-- 技术栈：React 19 + Electron + FFmpeg + TensorFlow.js / COCO-SSD
+- 技术栈：React 19 + Electron + FFmpeg
 - 提取方式：`extract-frames` 全段扫描，`extract-frames-batch` 分段 seek
-- 关键约束：临时文件必须清理；长按快进使用“固定节拍 + seeked 门控”；AI 检测必须等帧解码完成
-- 当前问题：AI 能力仍在探索中；项目体积偏大；横转竖操作台仍需继续收紧布局
+- 关键约束：临时文件必须清理；长按快进使用“固定节拍 + seeked 门控”
+- 当前问题：项目体积偏大；横转竖操作台仍需继续收紧布局
 
 ## 体积观察
 - 当前目录绿色版体积已从约 1.03 GB 降到约 435 MB
 - 安装版当前约 120 MB
 - `resources/app.asar` 已从约 313 MB 降到约 13.6 MB
 - 主要收益来自：前端依赖改为 `devDependencies`，不再作为运行时依赖打进包内
-- `ffprobe-static` 仍是当前打包结果中的大项之一，但已只保留 `win32/x64`
+- 去掉 AI 后，前端模块数从 `2972` 降到 `1705`，但安装包总体积变化有限
+- 去掉 `ffprobe-static` 后，安装版从约 `119.94 MB` 降到约 `105.28 MB`
 - `ffmpeg-static` 约 79 MB，属于必要但较大的基础依赖
+- 当前最大体积项依次为：Electron 主程序本体约 `201 MB`、`ffmpeg.exe` 约 `79 MB`、`dxcompiler.dll` 约 `24.9 MB`
 
 ## 体积优化优先级
-- 已完成：`ffprobe-static` 仅保留 Windows x64；前端依赖不再打入运行时包
-- 下一步优先评估 `ffprobe-static` 是否可进一步替换为更轻的本地单文件方案
-- 如后续重新强化 AI，再评估 TensorFlow.js / COCO-SSD 的引入方式，避免重新把体积拉回去
+- 已完成：前端依赖不再打入运行时包
+- 已完成：移除 TensorFlow.js / COCO-SSD 相关依赖和 AI 自动跟踪逻辑
+- 已完成：移除 `ffprobe-static`，统一改为直接调用 `ffmpeg -i` 解析基础视频信息
+- 当前判断：继续硬压 Electron 主体风险高、收益有限，暂不优先删除 Chromium/Electron 运行库
+- 当前判断：继续替换 `ffmpeg.exe` 有一定空间，但属于中风险低收益项，暂不优先推进
 - Electron 本身体积较大，但短期内不是最容易动手的第一优化点
 
 ## 构建约定

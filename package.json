@@ -1,7 +1,7 @@
 {
   "name": "video-ppp",
   "private": true,
-  "version": "2.1.4",
+  "version": "2.1.5",
   "description": "本地视频截图、优选与横转竖工具",
   "author": "qh775885",
   "license": "GPL-3.0",
@@ -29,10 +29,7 @@
       "dist/**/*",
       "electron-main.js",
       "package.json",
-      "public/icon.png",
-      "!node_modules/ffprobe-static/bin/darwin/**/*",
-      "!node_modules/ffprobe-static/bin/linux/**/*",
-      "!node_modules/ffprobe-static/bin/win32/ia32/**/*"
+      "public/icon.png"
     ],
     "electronLanguages": [
       "zh-CN"
@@ -60,8 +57,6 @@
     }
   },
   "devDependencies": {
-    "@tensorflow-models/coco-ssd": "^2.2.3",
-    "@tensorflow/tfjs": "^4.22.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.23",
@@ -70,19 +65,18 @@
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
     "file-saver": "^2.0.5",
-    "postcss": "^8.5.6",
     "jszip": "^3.10.1",
     "lucide-react": "^0.562.0",
+    "postcss": "^8.5.6",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "tailwindcss": "^4.1.18",
     "tailwind-merge": "^3.4.0",
+    "tailwindcss": "^4.1.18",
     "vite": "^7.2.4",
     "wait-on": "^8.0.5"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0",
     "fluent-ffmpeg": "^2.1.3"
   }
 }

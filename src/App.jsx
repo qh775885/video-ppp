@@ -233,52 +233,8 @@ function App() {
     const [captureNotice, setCaptureNotice] = useState('');
     const captureNoticeTimerRef = useRef(null);
 
-    // --- New AI / Advanced State ---
     const [isVideoLoading, setIsVideoLoading] = useState(false);
     const [fps, setFps] = useState(30);
-    const [autoTrack, setAutoTrack] = useState(false);
-    const [aiModel, setAiModel] = useState(null);
-    const [isAiLoading, setIsAiLoading] = useState(false);
-    const isDetectingRef = useRef(false);
-    const lastTrackedOffsetRef = useRef(0);
-    const manualLockTargetRef = useRef(null); // Used for "Mode B: Manual Overridden Lock"
-    const aiLoadPromiseRef = useRef(null);
-
-    // Load AI Model ON-DEMAND, completely eliminating any startup CPU spike or drag freezes
-    const loadAiModel = () => {
-        if (aiModel) return Promise.resolve(aiModel);
-        if (aiLoadPromiseRef.current) return aiLoadPromiseRef.current;
-
-        setIsAiLoading(true);
-        aiLoadPromiseRef.current = import('@tensorflow/tfjs')
-            .then(() => import('@tensorflow-models/coco-ssd'))
-            .then(cocoSsd => cocoSsd.load({ base: 'lite_mobilenet_v2' }))
-            .then(model => {
-                setAiModel(model);
-                setIsAiLoading(false);
-                aiLoadPromiseRef.current = null;
-                return model;
-            })
-            .catch(err => {
-                setIsAiLoading(false);
-                aiLoadPromiseRef.current = null;
-                throw err;
-            });
-
-        return aiLoadPromiseRef.current;
-    };
-
-    // Toggle logic now intercepts and loads model
-    const handleToggleAutoTrack = () => {
-        if (!autoTrack && !aiModel) {
-            loadAiModel();
-        }
-        if (autoTrack) {
-            // Un-toggling tracking completely resets any manual lock!
-            manualLockTargetRef.current = null;
-        }
-        setAutoTrack(!autoTrack);
-    };
 
     // Sync end range when duration loads — 使用智能推荐张数
     // 去掉 rangeEnd===0 条件，每次 duration 变化都重新同步（修复切换视频时范围不更新）
@@ -416,15 +372,10 @@ function App() {
             setPortraitRatio(mode);
         }
         setCropOffset(0);
-        manualLockTargetRef.current = null; // Clear lock across ratio swaps
     };
 
-    // Manual Object Priority Lock Hook
     const handleManualCropMove = (offset) => {
         setCropOffset(offset);
-        if (autoTrack) {
-            manualLockTargetRef.current = offset; // Force override to 'Target Lock Mode'
-        }
     };
 
     // --- Handlers ---
@@ -438,97 +389,9 @@ function App() {
         setIsPlaying(!isPlaying);
     };
 
-    // ====== 通用 AI 检测核心逻辑（复用于 onTimeUpdate 和批量提取） ======
-    const runAiDetection = async (video, model, ratio, lockRef, lastOffRef) => {
-        const threshold = lockRef.current !== null ? 0.05 : 0.45;
-        const predictions = await model.detect(video, 30, threshold);
-
-        let bestTarget = null;
-        const vWidth = video.videoWidth || video.naturalWidth || video.width || 1920;
-        const vHeight = video.videoHeight || video.naturalHeight || video.height || 1080;
-        const ratioParts = ratio.split(':');
-        const targetAspect = parseInt(ratioParts[0]) / parseInt(ratioParts[1]);
-        const targetWidth = vHeight * targetAspect;
-        const maxOffset = (vWidth - targetWidth) / 2;
-
-        const validClassesPrefix = ['person', 'dog', 'cat', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'car', 'truck', 'bus', 'train', 'motorcycle', 'airplane', 'bicycle', 'boat', 'chair', 'couch', 'bed'];
-
-        if (lockRef.current !== null) {
-            const targets = predictions.filter(p => validClassesPrefix.includes(p.class) || p.score > 0.05);
-            if (targets.length > 0) {
-                const expectedCenterPx = lockRef.current * maxOffset + vWidth / 2;
-                bestTarget = targets.sort((a, b) => {
-                    const distA = Math.abs((a.bbox[0] + a.bbox[2] / 2) - expectedCenterPx);
-                    const distB = Math.abs((b.bbox[0] + b.bbox[2] / 2) - expectedCenterPx);
-                    return distA - distB;
-                })[0];
-                if (bestTarget) {
-                    const cxBest = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
-                    if (Math.abs(cxBest - expectedCenterPx) > 300) {
-                        bestTarget = null;
-                    }
-                }
-            }
-        } else {
-            const persons = predictions.filter(p => p.class === 'person');
-            if (persons.length > 0) {
-                bestTarget = persons.sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]))[0];
-            }
-        }
-
-        if (bestTarget) {
-            const cx = bestTarget.bbox[0] + bestTarget.bbox[2] / 2;
-            let normOffset = 0;
-            if (maxOffset > 0) normOffset = (cx - vWidth / 2) / maxOffset;
-            let rawOffset = Math.max(-1, Math.min(1, normOffset));
-
-            // ====== 自适应惯性：位移越大 → 新值权重越高，跟踪越快 ======
-            const prevOffset = lockRef.current !== null ? lockRef.current : (lastOffRef.current ?? 0);
-            const delta = Math.abs(rawOffset - prevOffset);
-            // delta=0 → inertia=0.8（丝滑），delta=1 → inertia=0.2（快速跟上）
-            const inertia = Math.max(0.15, 0.8 - delta * 0.65);
-            let safeOffset = prevOffset * inertia + rawOffset * (1 - inertia);
-            safeOffset = Math.max(-1, Math.min(1, safeOffset));
-
-            if (lockRef.current !== null) {
-                lockRef.current = safeOffset;
-            }
-            lastOffRef.current = safeOffset;
-            return safeOffset;
-        }
-        return null; // 未检测到目标
-    };
-
-    // ====== 等待视频帧解码就绪的工具函数 ======
-    const waitForSeeked = (video, timeoutMs = 800) => {
-        return new Promise(resolve => {
-            // 如果 video.readyState >= 2 且 currentTime 已经在目标时间附近，直接 resolve
-            let resolved = false;
-            const done = () => { if (!resolved) { resolved = true; resolve(); } };
-            video.addEventListener('seeked', done, { once: true });
-            setTimeout(done, timeoutMs); // 超时兜底
-        });
-    };
-
     const onTimeUpdate = async (e) => {
         const time = e.target.currentTime;
         setCurrentTime(time);
-
-        // AI Person Tracking or Manual Object Tracking
-        if (autoTrack && aiModel && portraitRatio && videoRefVal && !isDetectingRef.current) {
-            isDetectingRef.current = true;
-            try {
-                const result = await runAiDetection(videoRefVal, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
-                if (result !== null) {
-                    setCropOffset(result);
-                }
-            } catch (err) {
-                console.error("AI tracking err:", err);
-            }
-            // 冷却时间：播放中 120ms（减少无效检测），seek中 40ms（保持响应）
-            const cooldown = isPlaying ? 120 : 40;
-            setTimeout(() => { isDetectingRef.current = false; }, cooldown);
-        }
     };
 
     const [isVerticalContent, setIsVerticalContent] = useState(false); // Detect if loaded video is vertical
@@ -548,29 +411,6 @@ function App() {
             setCurrentTime(time);
         }
     };
-
-    // ====== 链式 Seek：等帧解码完毕后再触发 AI 检测 + 跳下一帧 ======
-    useEffect(() => {
-        if (!videoRefVal) return;
-        const onSeeked = async () => {
-            // 在 seek 完成后运行 AI 检测（帧此时已解码就绪）
-            if (autoTrack && aiModel && portraitRatio && !isDetectingRef.current) {
-                isDetectingRef.current = true;
-                try {
-                    const result = await runAiDetection(videoRefVal, aiModel, portraitRatio, manualLockTargetRef, lastTrackedOffsetRef);
-                    if (result !== null) {
-                        setCropOffset(result);
-                    }
-                } catch (err) {
-                    console.error("AI seek-detect err:", err);
-                }
-                isDetectingRef.current = false;
-            }
-        };
-        videoRefVal.addEventListener('seeked', onSeeked);
-        return () => videoRefVal.removeEventListener('seeked', onSeeked);
-    }, [videoRefVal, autoTrack, aiModel, portraitRatio]);
-
 
     const handleFileLoaded = async (file) => {
         setIsVideoLoading(true);
@@ -948,8 +788,7 @@ function App() {
         const {
             frameIds = null,
             ratio = portraitRatio,
-            offset = cropOffset,
-            useAutoTrack = autoTrack
+            offset = cropOffset
         } = options;
 
         if (isExtracting || frames.length === 0 || !ratio) return;
@@ -964,34 +803,13 @@ function App() {
             setExtractElapsed(Math.round((Date.now() - processStartTime) / 1000));
         }, 500);
 
-        let trackingOffset = lastTrackedOffsetRef.current !== undefined ? lastTrackedOffsetRef.current : offset;
-
         try {
-            let activeAiModel = aiModel;
-            if (useAutoTrack && !activeAiModel) {
-                setExtractStatus('等待 AI 加载...');
-                activeAiModel = await loadAiModel();
-            }
-
             const processedFrames = new Map();
             for (let i = 0; i < targetFrames.length; i++) {
                 setExtractStatus(`竖图处理 ${i + 1}/${targetFrames.length}`);
                 const frame = targetFrames[i];
                 const img = await loadImageFromUrl(frame.url);
-                let frameOffset = useAutoTrack ? trackingOffset : offset;
-                if (useAutoTrack && activeAiModel) {
-                    try {
-                        const result = await runAiDetection(img, activeAiModel, ratio, manualLockTargetRef, lastTrackedOffsetRef);
-                        if (result !== null) {
-                            trackingOffset = result;
-                            frameOffset = result;
-                        }
-                    } catch (err) {
-                        console.error('AI detect failed:', err);
-                    }
-                }
-
-                const canvas = cropFrameToCanvas(img, frameOffset, true, ratio);
+                const canvas = cropFrameToCanvas(img, offset, true, ratio);
                 const savedFrame = await saveCanvasAsFrame(canvas, frame.time, {
                     isPortrait: true,
                     ratio,
