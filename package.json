@@ -1,7 +1,7 @@
 {
   "name": "video-ppp",
   "private": true,
-  "version": "2.1.3",
+  "version": "2.1.4",
   "description": "本地视频截图、优选与横转竖工具",
   "author": "qh775885",
   "license": "GPL-3.0",

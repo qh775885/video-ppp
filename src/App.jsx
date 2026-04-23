@@ -736,22 +736,37 @@ function App() {
             if (target?.url?.startsWith('blob:')) {
                 URL.revokeObjectURL(target.url);
             }
+            if (target?.sourceFrame?.url?.startsWith('blob:')) {
+                URL.revokeObjectURL(target.sourceFrame.url);
+            }
             return prev.filter(frame => frame.id !== frameId);
         });
     };
 
+    const handleRestoreFrame = (frameId) => {
+        setFrames(prev => prev.map(frame => {
+            if (frame.id !== frameId || !frame.sourceFrame) return frame;
+            if (frame.url?.startsWith('blob:')) {
+                URL.revokeObjectURL(frame.url);
+            }
+            return frame.sourceFrame;
+        }));
+    };
+
     // ====== v2.0.9 直接复用 Canvas 保存帧（跳过 re-seek） ======
     const saveCanvasAsFrame = async (canvas, time, options = {}) => {
-        const { isPortrait = !!portraitRatio, ratio = portraitRatio || "16:9", append = true } = options;
+        const { isPortrait = !!portraitRatio, ratio = portraitRatio || "16:9", append = true, sourceFrameId = null } = options;
         return new Promise((resolve) => {
             canvas.toBlob(async (blob) => {
                 if (!blob) { resolve(); return; }
                 const url = URL.createObjectURL(blob);
                 const newFrame = {
                     id: Date.now() + Math.random(),
+                    createdAt: Date.now(),
                     url, time, blob,
                     isPortrait,
                     ratio,
+                    sourceFrameId,
                     filePath: null
                 };
                 if (cacheDir && videoFile) {
@@ -980,12 +995,15 @@ function App() {
                 const savedFrame = await saveCanvasAsFrame(canvas, frame.time, {
                     isPortrait: true,
                     ratio,
-                    append: false
+                    append: false,
+                    sourceFrameId: frame.id
                 });
+                if (savedFrame) {
+                    savedFrame.sourceFrame = { ...frame };
+                }
                 if (savedFrame) processedFrames.set(frame.id, savedFrame);
             }
 
-            revokeFrames(targetFrames.filter(frame => processedFrames.has(frame.id)));
             setFrames(prev => prev.map(frame => processedFrames.get(frame.id) ?? frame));
             showCaptureNotice(processedFrames.size > 0 ? `已处理 ${processedFrames.size} 张竖图` : '未生成竖图');
         } finally {
@@ -1253,6 +1271,7 @@ function App() {
                 frames={frames}
                 onClear={handleClear}
                 onDeleteFrame={handleDeleteFrame}
+                onRestoreFrame={handleRestoreFrame}
                 onPortraitProcess={handlePortraitProcess}
                 onDownload={handleDownload}
                 cacheDir={cacheDir}

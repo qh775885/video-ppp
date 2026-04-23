@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Trash2, FolderOpen, Image as ImageIcon, X, ChevronLeft, ChevronRight, Scissors } from 'lucide-react';
 import { version } from '../../package.json';
 
-export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onDownload, cacheDir, onSelectCacheDir }) {
+export function Sidebar({ frames, onClear, onDeleteFrame, onRestoreFrame, onPortraitProcess, onDownload, cacheDir, onSelectCacheDir }) {
     const [previewIndex, setPreviewIndex] = useState(-1); // -1 means closed
     const [isAboutOpen, setIsAboutOpen] = useState(false);
     const [isPortraitWorkbenchOpen, setIsPortraitWorkbenchOpen] = useState(false);
@@ -13,6 +13,7 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
     const [previewMetrics, setPreviewMetrics] = useState({ width: 0, height: 0, maxOffset: 0 });
     const previewContainerRef = useRef(null);
     const previewImageRef = useRef(null);
+    const workbenchThumbStripRef = useRef(null);
     const isDraggingCropRef = useRef(false);
     const dragStartXRef = useRef(0);
     const dragStartOffsetRef = useRef(0);
@@ -53,9 +54,12 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
     const currentFrame = previewIndex >= 0 ? frames[previewIndex] : null;
     const horizontalFrames = useMemo(() => frames.filter(frame => !frame.isPortrait), [frames]);
     const portraitFrames = useMemo(() => frames.filter(frame => frame.isPortrait), [frames]);
-    const feedbackFrames = useMemo(() => [...frames].slice().reverse().slice(0, 6), [frames]);
+    const feedbackFrames = useMemo(() => [...portraitFrames], [portraitFrames]);
+    const frameNumberMap = useMemo(() => new Map(frames.map((frame, index) => [frame.id, index + 1])), [frames]);
     const hasHorizontalFrames = horizontalFrames.length > 0;
     const activeWorkbenchFrame = horizontalFrames.find(frame => frame.id === activeWorkbenchId) || horizontalFrames[0] || null;
+    const activeWorkbenchIndex = activeWorkbenchFrame ? horizontalFrames.findIndex(frame => frame.id === activeWorkbenchFrame.id) : -1;
+    const latestPortraitFeedback = feedbackFrames.find(frame => frame.isPortrait) || null;
 
     const updatePreviewMetrics = useCallback(() => {
         const container = previewContainerRef.current;
@@ -88,6 +92,14 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
             setActiveWorkbenchId(horizontalFrames[0].id);
         }
     }, [isPortraitWorkbenchOpen, activeWorkbenchFrame, horizontalFrames]);
+
+    useEffect(() => {
+        if (!isPortraitWorkbenchOpen || !activeWorkbenchFrame || !workbenchThumbStripRef.current) return;
+        const activeThumb = workbenchThumbStripRef.current.querySelector(`[data-workbench-thumb-id="${activeWorkbenchFrame.id}"]`);
+        if (activeThumb?.scrollIntoView) {
+            activeThumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+    }, [activeWorkbenchFrame, isPortraitWorkbenchOpen]);
 
     useEffect(() => {
         if (!isPortraitWorkbenchOpen) return;
@@ -133,10 +145,22 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
         setIsPortraitWorkbenchOpen(true);
     };
 
-    const handleWorkbenchCrop = (frameIds) => {
+    const handleWorkbenchCrop = useCallback((frameIds) => {
         if (!frameIds || frameIds.length === 0) return;
         onPortraitProcess({ frameIds, ratio: portraitRatio, offset: workbenchOffset, useAutoTrack: false });
-    };
+    }, [onPortraitProcess, portraitRatio, workbenchOffset]);
+
+    const handleWorkbenchStep = useCallback((direction) => {
+        if (!horizontalFrames.length || activeWorkbenchIndex === -1) return;
+        const nextIndex = Math.max(0, Math.min(horizontalFrames.length - 1, activeWorkbenchIndex + direction));
+        setActiveWorkbenchId(horizontalFrames[nextIndex].id);
+    }, [activeWorkbenchIndex, horizontalFrames]);
+
+    const scrollWorkbenchThumbs = useCallback((direction) => {
+        const strip = workbenchThumbStripRef.current;
+        if (!strip) return;
+        strip.scrollBy({ left: direction * 320, behavior: 'smooth' });
+    }, []);
 
     const handleCropMouseDown = (e) => {
         if (previewMetrics.maxOffset <= 0) return;
@@ -153,6 +177,47 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
         e.stopPropagation();
         handleWorkbenchCrop([activeWorkbenchFrame.id]);
     };
+
+    const handleFeedbackPreview = useCallback((frame) => {
+        const frameIndex = frames.findIndex(item => item.id === frame.id);
+        if (frameIndex !== -1) {
+            setPreviewIndex(frameIndex);
+        }
+        if (!frame.isPortrait && horizontalFrames.some(item => item.id === frame.id)) {
+            setActiveWorkbenchId(frame.id);
+        }
+    }, [frames, horizontalFrames]);
+
+
+    useEffect(() => {
+        if (!isPortraitWorkbenchOpen) return;
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                setIsPortraitWorkbenchOpen(false);
+                return;
+            }
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                handleWorkbenchStep(-1);
+                return;
+            }
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                handleWorkbenchStep(1);
+                return;
+            }
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                if (activeWorkbenchFrame) {
+                    handleWorkbenchCrop([activeWorkbenchFrame.id]);
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [activeWorkbenchFrame, handleWorkbenchCrop, handleWorkbenchStep, isPortraitWorkbenchOpen]);
 
     return (
         <div className="flex flex-col h-full bg-zinc-950/90 backdrop-blur-xl border-l border-white/10 w-[320px]">
@@ -255,11 +320,14 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
                                     </button>
 
                                     {/* Overlay Info */}
+                                    <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/70 backdrop-blur-sm text-[8px] font-mono font-bold text-white border border-white/10 opacity-80 group-hover:opacity-100 transition-opacity">
+                                        #{frameNumberMap.get(frame.id)}
+                                    </div>
                                     <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[8px] font-mono font-bold text-white border border-white/10 opacity-60 group-hover:opacity-100 transition-opacity">
                                         {new Date(frame.time * 1000).toISOString().substr(14, 5)}
                                     </div>
                                     {frame.isPortrait && (
-                                        <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-indigo-500/80 text-[8px] font-bold text-white shadow-md">
+                                        <div className="absolute bottom-1 left-1 px-1 py-0.5 rounded bg-indigo-500/80 text-[8px] font-bold text-white shadow-md">
                                             {frame.ratio || "9:16"}
                                         </div>
                                     )}
@@ -354,10 +422,10 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
 
             {isPortraitWorkbenchOpen && activeWorkbenchFrame && createPortal(
                 <div
-                    className="fixed inset-0 z-[180] bg-black/80 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200"
+                    className="fixed inset-0 z-[180] bg-black/80 backdrop-blur-sm flex items-center justify-center overflow-auto p-3 animate-in fade-in duration-200"
                     onClick={() => setIsPortraitWorkbenchOpen(false)}
                 >
-                    <div className="w-[980px] max-w-[92vw] bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-4 flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+                    <div className="w-[1260px] max-w-[96vw] h-[92vh] max-h-[860px] bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-4 flex flex-col gap-4 overflow-hidden" onClick={e => e.stopPropagation()}>
                         <div className="flex items-start justify-between gap-4">
                             <div>
                                 <h3 className="text-lg font-bold text-white tracking-wide">横转竖操作台</h3>
@@ -370,7 +438,7 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
                             </button>
                         </div>
 
-                        <div className="flex items-center justify-between gap-4 rounded-xl bg-black/30 border border-white/5 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-black/30 border border-white/5 p-3">
                             <div className="flex items-center gap-2">
                                 {['9:16', '3:4', '4:5'].map(ratio => (
                                     <button
@@ -385,130 +453,188 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
                                     </button>
                                 ))}
                             </div>
+                            <div className="hidden md:flex items-center gap-4 text-[11px] text-zinc-500">
+                                <span>滚轮/左右切图</span>
+                                <span>Enter 裁切</span>
+                            </div>
                         </div>
 
-                        <div className="grid grid-cols-[minmax(0,1fr)_220px] gap-3 min-h-[500px]">
-                            <div className="rounded-2xl bg-black/40 border border-white/5 p-3 flex flex-col gap-3 min-h-[500px]">
-                                <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <div className="flex items-center gap-3">
-                                        <span>手动预览</span>
-                                        <span className="px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-200 font-mono">
-                                            当前图 {horizontalFrames.findIndex(frame => frame.id === activeWorkbenchFrame.id) + 1} / {horizontalFrames.length}
-                                        </span>
-                                    </div>
-                                    <span>右键当前图直接裁切</span>
-                                </div>
-
-                                <div
-                                    ref={previewContainerRef}
-                                    className="relative flex-1 min-h-[340px] rounded-2xl bg-black overflow-hidden border border-white/5"
-                                    onContextMenu={handleWorkbenchRightClick}
-                                >
-                                    <img
-                                        ref={previewImageRef}
-                                        src={activeWorkbenchFrame.url}
-                                        alt="portrait-workbench"
-                                        className="absolute inset-0 w-full h-full object-contain"
-                                        onLoad={updatePreviewMetrics}
-                                    />
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <div
-                                            className="rounded-md border-2 border-purple-400/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.48)] pointer-events-auto cursor-grab active:cursor-grabbing"
-                                            style={{
-                                                width: `${previewMetrics.width}px`,
-                                                height: `${previewMetrics.height}px`,
-                                                transform: `translateX(${workbenchOffset * previewMetrics.maxOffset}px)`
-                                            }}
-                                            onMouseDown={handleCropMouseDown}
-                                        >
-                                            <div className="absolute inset-0 opacity-20 pointer-events-none">
-                                                <div className="absolute top-1/3 left-0 w-full h-px bg-white"></div>
-                                                <div className="absolute top-2/3 left-0 w-full h-px bg-white"></div>
-                                                <div className="absolute left-1/3 top-0 h-full w-px bg-white"></div>
-                                                <div className="absolute left-2/3 top-0 h-full w-px bg-white"></div>
-                                            </div>
+                        <div className="min-h-0 flex-1">
+                            <div className="grid h-full min-h-0 gap-3 grid-cols-[minmax(0,1fr)_280px] grid-rows-[minmax(0,1fr)_124px]">
+                                <div className="rounded-2xl bg-black/40 border border-white/5 p-3 flex min-h-0 flex-col gap-3 lg:row-start-1">
+                                    <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                        <div className="flex items-center gap-3">
+                                            <span>手动预览</span>
+                                            <span className="px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-200 font-mono">
+                                                图库 #{frameNumberMap.get(activeWorkbenchFrame.id)} / {frames.length}
+                                            </span>
                                         </div>
-                                    </div>
-                                    <div className="absolute left-3 top-3 px-2 py-1 rounded bg-black/60 border border-white/10 text-[10px] font-mono text-purple-200">
-                                        {portraitRatio} | 偏移 {workbenchOffset.toFixed(2)}
-                                    </div>
-                                    <div className="absolute right-3 bottom-3 px-2 py-1 rounded bg-black/60 border border-white/10 text-[10px] font-mono text-zinc-200">
-                                        {activeWorkbenchFrame ? new Date(activeWorkbenchFrame.time * 1000).toISOString().substr(11, 8) : '--:--:--'}
-                                    </div>
-                                </div>
-
-                                <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
-                                    <span>源图缩略图</span>
-                                    <span>已显示 {Math.min(horizontalFrames.length, 8)} / {horizontalFrames.length} 张</span>
-                                </div>
-
-                                <div className="grid grid-cols-4 gap-2">
-                                    {horizontalFrames.slice(0, 8).map((frame, index) => (
-                                        <button
-                                            key={frame.id}
-                                            onClick={() => setActiveWorkbenchId(frame.id)}
-                                            onContextMenu={(e) => {
-                                                e.preventDefault();
-                                                setActiveWorkbenchId(frame.id);
-                                                handleWorkbenchCrop([frame.id]);
-                                            }}
-                                            className={`relative overflow-hidden rounded-xl border transition-all ${activeWorkbenchFrame.id === frame.id ? 'border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.18)] scale-[1.02]' : 'border-white/8 hover:border-white/20'}`}
-                                            style={{ aspectRatio: '16 / 9' }}
-                                        >
-                                            <img src={frame.url} alt="workbench-thumb" className="w-full h-full object-cover bg-black/60" />
-                                            <div className="absolute left-1.5 top-1.5 px-1.5 py-0.5 rounded bg-black/65 text-[9px] font-mono text-white border border-white/10">
-                                                {index + 1}
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl bg-black/30 border border-white/5 p-2.5 flex flex-col gap-2 min-h-[500px]">
-                                <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
-                                    <span>实时图库反馈</span>
-                                    <span>{portraitFrames.length} 张竖图</span>
-                                </div>
-
-                                {portraitFrames.length > 0 && (
-                                    <div className="rounded-xl border border-purple-500/20 bg-purple-500/10 px-2.5 py-2 text-[10px] text-purple-200 font-mono">
-                                        最新输出已直接回写图库
-                                    </div>
-                                )}
-
-                                <div className="flex-1 overflow-y-auto pr-1 -mr-1 no-scrollbar flex flex-col gap-2">
-                                    {feedbackFrames.length === 0 ? (
-                                        <div className="flex-1 min-h-[220px] rounded-2xl border border-dashed border-white/10 flex items-center justify-center text-[12px] text-zinc-600">
-                                            暂无图库反馈
-                                        </div>
-                                    ) : (
-                                        feedbackFrames.map((frame, index) => (
-                                            <div
-                                                key={frame.id}
-                                                className={`relative rounded-xl overflow-hidden border ${frame.isPortrait ? 'border-purple-500/30 bg-purple-500/5' : 'border-white/8 bg-white/[0.03]'}`}
+                                        <div className="flex items-center gap-2">
+                                            <span className="hidden sm:block">右键直裁</span>
+                                            <button
+                                                onClick={() => handleWorkbenchCrop([activeWorkbenchFrame.id])}
+                                                className="inline-flex items-center gap-1 rounded-lg border border-purple-500/30 bg-purple-500/10 px-2.5 py-1.5 text-[11px] font-medium text-purple-200 transition-colors hover:bg-purple-500/20 hover:text-white"
                                             >
-                                                <div className="flex items-center gap-2 p-2">
-                                                    <div
-                                                        className="relative shrink-0 overflow-hidden rounded-lg bg-black/50"
-                                                        style={{ width: frame.isPortrait ? '48px' : '68px', aspectRatio: frame.ratio ? frame.ratio.replace(':', '/') : (frame.isPortrait ? '9 / 16' : '16 / 9') }}
-                                                    >
-                                                        <img src={frame.url} alt={`feedback-${index}`} className="w-full h-full object-cover" />
-                                                    </div>
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-1.5 text-[10px] text-zinc-300 font-mono">
-                                                            <span>{new Date(frame.time * 1000).toISOString().substr(11, 8)}</span>
-                                                            <span className={`px-1.5 py-0.5 rounded border ${frame.isPortrait ? 'border-purple-500/30 text-purple-200 bg-purple-500/10' : 'border-white/10 text-zinc-400 bg-black/30'}`}>
-                                                                {frame.isPortrait ? frame.ratio : '原图'}
-                                                            </span>
-                                                        </div>
-                                                        <div className="mt-1 text-[10px] text-zinc-500 truncate">
-                                                            {frame.isPortrait ? '已生成竖图' : '源图库原图'}
-                                                        </div>
-                                                    </div>
+                                                <Scissors size={12} />
+                                                裁切当前图
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        ref={previewContainerRef}
+                                        className="relative flex-1 min-h-0 rounded-2xl bg-black overflow-hidden border border-white/5"
+                                        onContextMenu={handleWorkbenchRightClick}
+                                        onWheel={(e) => {
+                                            if (Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
+                                            e.preventDefault();
+                                            handleWorkbenchStep(e.deltaY > 0 ? 1 : -1);
+                                        }}
+                                    >
+                                        <img
+                                            ref={previewImageRef}
+                                            src={activeWorkbenchFrame.url}
+                                            alt="portrait-workbench"
+                                            className="absolute inset-0 w-full h-full object-contain"
+                                            onLoad={updatePreviewMetrics}
+                                        />
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <div
+                                                className="rounded-md border-2 border-purple-400/90 bg-white/[0.02] shadow-[0_0_0_9999px_rgba(0,0,0,0.7)] pointer-events-auto cursor-grab active:cursor-grabbing"
+                                                style={{
+                                                    width: `${previewMetrics.width}px`,
+                                                    height: `${previewMetrics.height}px`,
+                                                    transform: `translateX(${workbenchOffset * previewMetrics.maxOffset}px)`
+                                                }}
+                                                onMouseDown={handleCropMouseDown}
+                                            >
+                                                <div className="absolute inset-0 opacity-20 pointer-events-none">
+                                                    <div className="absolute top-1/3 left-0 w-full h-px bg-white"></div>
+                                                    <div className="absolute top-2/3 left-0 w-full h-px bg-white"></div>
+                                                    <div className="absolute left-1/3 top-0 h-full w-px bg-white"></div>
+                                                    <div className="absolute left-2/3 top-0 h-full w-px bg-white"></div>
                                                 </div>
                                             </div>
-                                        ))
-                                    )}
+                                        </div>
+                                        <div className="absolute left-3 top-3 px-2 py-1 rounded bg-black/60 border border-white/10 text-[10px] font-mono text-purple-200">
+                                            {portraitRatio} | 偏移 {workbenchOffset.toFixed(2)}
+                                        </div>
+                                        <div className="absolute right-3 bottom-3 px-2 py-1 rounded bg-black/60 border border-white/10 text-[10px] font-mono text-zinc-200">
+                                            {activeWorkbenchFrame ? new Date(activeWorkbenchFrame.time * 1000).toISOString().substr(11, 8) : '--:--:--'}
+                                        </div>
+                                        <button
+                                            onClick={() => handleWorkbenchStep(-1)}
+                                            disabled={activeWorkbenchIndex <= 0}
+                                            className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 p-2 text-zinc-300 transition-colors hover:bg-black/75 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                                        >
+                                            <ChevronLeft size={18} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleWorkbenchStep(1)}
+                                            disabled={activeWorkbenchIndex >= horizontalFrames.length - 1}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 p-2 text-zinc-300 transition-colors hover:bg-black/75 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                                        >
+                                            <ChevronRight size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-white/5 bg-black/30 p-3 flex min-h-0 flex-col gap-2 col-start-1 row-start-2 overflow-hidden">
+                                    <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
+                                        <span>原图</span>
+                                        <div className="flex items-center gap-2">
+                                            <span>{horizontalFrames.length} 张</span>
+                                            <button
+                                                onClick={() => scrollWorkbenchThumbs(-1)}
+                                                className="rounded-lg border border-white/10 bg-white/5 p-1 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
+                                                title="向左滚动"
+                                            >
+                                                <ChevronLeft size={14} />
+                                            </button>
+                                            <button
+                                                onClick={() => scrollWorkbenchThumbs(1)}
+                                                className="rounded-lg border border-white/10 bg-white/5 p-1 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
+                                                title="向右滚动"
+                                            >
+                                                <ChevronRight size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        ref={workbenchThumbStripRef}
+                                        className="overflow-x-auto pb-1 -mb-1 no-scrollbar"
+                                        onWheel={(e) => {
+                                            if (Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
+                                            e.preventDefault();
+                                            e.currentTarget.scrollLeft += e.deltaY;
+                                        }}
+                                    >
+                                        <div className="flex gap-2 min-w-max pr-2">
+                                            {horizontalFrames.map((frame) => (
+                                                <button
+                                                    key={frame.id}
+                                                    data-workbench-thumb-id={frame.id}
+                                                    onClick={() => setActiveWorkbenchId(frame.id)}
+                                                    onContextMenu={(e) => {
+                                                        e.preventDefault();
+                                                        setActiveWorkbenchId(frame.id);
+                                                        handleWorkbenchCrop([frame.id]);
+                                                    }}
+                                                    className={`relative h-[72px] w-[128px] shrink-0 overflow-hidden rounded-xl border transition-all ${activeWorkbenchFrame.id === frame.id ? 'border-purple-400 bg-purple-500/10 shadow-[0_0_18px_rgba(168,85,247,0.16)]' : 'border-white/8 bg-black/45 hover:border-white/20'}`}
+                                                >
+                                                    <img src={frame.url} alt="workbench-thumb" className="w-full h-full object-cover bg-black/60" />
+                                                    <div className="absolute left-2 top-2 px-2 py-1 rounded-lg bg-black/80 text-[10px] font-mono font-bold text-white border border-white/10 shadow-lg">
+                                                        #{frameNumberMap.get(frame.id)}
+                                                    </div>
+                                                    <div className="absolute inset-x-0 bottom-0 flex items-center justify-between px-2 py-1 text-[9px] font-mono backdrop-blur-sm bg-black/55 text-zinc-100">
+                                                        <span>{new Date(frame.time * 1000).toISOString().substr(11, 8)}</span>
+                                                        <span>原图</span>
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-white/5 bg-black/30 p-3 flex min-h-0 flex-col gap-2 col-start-2 row-span-2 min-w-[280px] overflow-hidden">
+                                    <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1 font-mono">
+                                        <span>成品</span>
+                                        <span>{portraitFrames.length}/{horizontalFrames.length}</span>
+                                    </div>
+
+                                    <div className="flex-1 overflow-y-auto pr-1 -mr-1 no-scrollbar grid grid-cols-2 gap-2 content-start auto-rows-max">
+                                        {feedbackFrames.length === 0 ? (
+                                            <div className="col-span-2 flex min-h-[220px] rounded-2xl border border-dashed border-white/10 items-center justify-center text-[12px] text-zinc-600">
+                                                暂无成品
+                                            </div>
+                                        ) : (
+                                            feedbackFrames.map((frame) => (
+                                                <button
+                                                    key={frame.id}
+                                                    onClick={() => handleFeedbackPreview(frame)}
+                                                    onContextMenu={(e) => {
+                                                        if (!frame.sourceFrame) return;
+                                                        e.preventDefault();
+                                                        onRestoreFrame(frame.id);
+                                                    }}
+                                                    className={`relative overflow-hidden rounded-xl border bg-black/45 transition-all ${frame.id === latestPortraitFeedback?.id ? 'border-purple-500/70 shadow-[0_0_0_1px_rgba(168,85,247,0.35),0_0_10px_rgba(168,85,247,0.1)]' : 'border-white/8 hover:border-purple-400/40'}`}
+                                                    title="点击看大图，右键复原"
+                                                >
+                                                    <div className="relative aspect-[3/4] overflow-hidden bg-black/60">
+                                                        <img src={frame.url} alt="feedback-thumb" className="w-full h-full object-cover" />
+                                                        <div className="absolute left-2 top-2 px-2 py-1 rounded-lg bg-black/82 text-[10px] font-mono font-bold text-white border border-white/10 shadow-lg">
+                                                            #{frameNumberMap.get(frame.id)}
+                                                        </div>
+                                                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between px-2 py-1.5 text-[9px] font-mono bg-black/60 text-zinc-100">
+                                                            <span>{new Date(frame.time * 1000).toISOString().substr(11, 8)}</span>
+                                                            <span>{frame.ratio || portraitRatio}</span>
+                                                        </div>
+                                                    </div>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -522,7 +648,7 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
                 <div
                     autoFocus
                     tabIndex={0}
-                    className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center animate-in fade-in duration-200 select-none outline-none"
+                    className="fixed inset-0 z-[220] bg-black/95 backdrop-blur-xl flex items-center justify-center animate-in fade-in duration-200 select-none outline-none"
                     onClick={() => {
                         setPreviewIndex(-1);
                         // Force window body to regain active focus after portal unmount in Electron
@@ -539,7 +665,7 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
 
                         {/* Info Badge */}
                         <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 backdrop-blur rounded-full border flex items-center gap-3 shadow-xl transition-all duration-300 ${previewIndex === frames.length - 1 ? 'bg-amber-900/80 border-amber-500/30' : previewIndex === 0 ? 'bg-indigo-900/60 border-indigo-500/30' : 'bg-zinc-900/80 border-white/10'}`}>
-                            <span className={`text-xs font-mono font-bold ${previewIndex === frames.length - 1 ? 'text-amber-300' : 'text-indigo-300'}`}>#{previewIndex + 1} / {frames.length}</span>
+                            <span className={`text-xs font-mono font-bold ${previewIndex === frames.length - 1 ? 'text-amber-300' : 'text-indigo-300'}`}>#{frameNumberMap.get(currentFrame.id)} / {frames.length}</span>
                             {previewIndex === frames.length - 1 && <span className="text-xs font-bold text-amber-400">已是最后一张</span>}
                             {previewIndex === 0 && frames.length > 1 && <span className="text-xs font-bold text-indigo-300">第一张</span>}
                             <div className="w-px h-3 bg-white/20"></div>
@@ -567,6 +693,17 @@ export function Sidebar({ frames, onClear, onDeleteFrame, onPortraitProcess, onD
                             onClick={() => setPreviewIndex(-1)}
                         >
                             <X size={24} />
+                        </button>
+
+                        <button
+                            className="absolute top-6 right-24 p-3 rounded-full bg-white/10 hover:bg-red-500/90 text-white transition-all duration-300 shadow-lg"
+                            onClick={() => {
+                                onDeleteFrame(currentFrame.id);
+                                setPreviewIndex(-1);
+                            }}
+                            title="删除这张"
+                        >
+                            <Trash2 size={20} />
                         </button>
                     </div>
                 </div>,
