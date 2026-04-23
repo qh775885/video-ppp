@@ -13,12 +13,12 @@
     "web": "vite",
     "preview": "vite preview",
     "clean:base": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Get-Process | Where-Object { $_.ProcessName -eq '视频截图神器' -or $_.ProcessName -eq 'electron' } | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; foreach ($p in @('dist','extracted_asar')) { if (Test-Path $p) { Remove-Item $p -Recurse -Force } }\"",
-    "clean:dir": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$releaseRoot = 'release'; if (!(Test-Path $releaseRoot)) { New-Item -ItemType Directory -Path $releaseRoot | Out-Null }; foreach ($p in @(('视频截图神器-' + $env:npm_package_version + '-绿色版'), 'win-unpacked', '.icon-ico', 'builder-debug.yml')) { $full = Join-Path $releaseRoot $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\"",
-    "clean:setup": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$releaseRoot = 'release'; if (!(Test-Path $releaseRoot)) { New-Item -ItemType Directory -Path $releaseRoot | Out-Null }; foreach ($p in @(('视频截图神器 Setup ' + $env:npm_package_version + '.exe'), ('视频截图神器 Setup ' + $env:npm_package_version + '.exe.blockmap'), 'latest.yml', 'builder-debug.yml', 'win-unpacked', '.icon-ico')) { $full = Join-Path $releaseRoot $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\"",
+    "clean:dir": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$releaseRoot = 'release'; if (!(Test-Path $releaseRoot)) { New-Item -ItemType Directory -Path $releaseRoot | Out-Null }; foreach ($p in @(('视频截图神器-' + $env:npm_package_version + '-绿色版'), 'win-unpacked', '.icon-ico', 'builder-debug.yml', 'builder-effective-config.yaml')) { $full = Join-Path $releaseRoot $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\"",
+    "clean:setup": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$releaseRoot = 'release'; if (!(Test-Path $releaseRoot)) { New-Item -ItemType Directory -Path $releaseRoot | Out-Null }; foreach ($p in @(('视频截图神器 Setup ' + $env:npm_package_version + '.exe'), ('视频截图神器 Setup ' + $env:npm_package_version + '.exe.blockmap'), 'latest.yml', 'builder-debug.yml', 'builder-effective-config.yaml', 'win-unpacked', '.icon-ico')) { $full = Join-Path $releaseRoot $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\"",
     "verify": "vite build",
     "build": "npm run build:dir",
-    "build:dir": "npm run clean:base && npm run clean:dir && npm run verify && electron-builder --win dir && powershell -NoProfile -ExecutionPolicy Bypass -Command \"$base = 'release'; $src = Join-Path $base 'win-unpacked'; $dst = Join-Path $base ('视频截图神器-' + $env:npm_package_version + '-绿色版'); if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }; if (Test-Path $src) { Move-Item $src $dst }; foreach ($p in @('.icon-ico','builder-debug.yml')) { $full = Join-Path $base $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\"",
-    "build:setup": "npm run clean:base && npm run clean:setup && npm run verify && electron-builder --win nsis && powershell -NoProfile -ExecutionPolicy Bypass -Command \"$base = 'release'; foreach ($p in @('win-unpacked', '.icon-ico', 'builder-debug.yml', 'latest.yml', ('视频截图神器 Setup ' + $env:npm_package_version + '.exe.blockmap'))) { $full = Join-Path $base $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\""
+    "build:dir": "npm run clean:base && npm run clean:dir && npm run verify && electron-builder --win dir && powershell -NoProfile -ExecutionPolicy Bypass -Command \"$base = 'release'; $src = Join-Path $base 'win-unpacked'; $dst = Join-Path $base ('视频截图神器-' + $env:npm_package_version + '-绿色版'); if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }; if (Test-Path $src) { Move-Item $src $dst }; foreach ($p in @('.icon-ico','builder-debug.yml','builder-effective-config.yaml')) { $full = Join-Path $base $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\"",
+    "build:setup": "npm run clean:base && npm run clean:setup && npm run verify && electron-builder --win nsis && powershell -NoProfile -ExecutionPolicy Bypass -Command \"$base = 'release'; foreach ($p in @('win-unpacked', '.icon-ico', 'builder-debug.yml', 'builder-effective-config.yaml', 'latest.yml', ('视频截图神器 Setup ' + $env:npm_package_version + '.exe.blockmap'))) { $full = Join-Path $base $p; if (Test-Path $full) { Remove-Item $full -Recurse -Force -ErrorAction SilentlyContinue } }\""
   },
   "build": {
     "appId": "com.qh775885.videoppp",
@@ -51,6 +51,8 @@
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
       "allowElevation": true,
+      "include": "build/installer.nsh",
+      "warningsAsErrors": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "视频截图神器",
